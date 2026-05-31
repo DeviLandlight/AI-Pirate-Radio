@@ -6,14 +6,6 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
 import kotlin.coroutines.resume
 
-interface TtsPlayer {
-    suspend fun play(audioBytes: ByteArray?)
-}
-
-class SilentTtsPlayer : TtsPlayer {
-    override suspend fun play(audioBytes: ByteArray?) = Unit
-}
-
 class AndroidTtsAudioPlayer(
     context: Context,
     private val reportStatus: (String) -> Unit = {}

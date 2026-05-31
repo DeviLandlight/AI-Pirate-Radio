@@ -16,3 +16,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "AI Pirate Radio"
 include(":app")
+include(":core")
+include(":bot")

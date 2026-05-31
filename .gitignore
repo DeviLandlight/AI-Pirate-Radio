@@ -4,7 +4,10 @@ local.properties
 # Gradle
 /.gradle/
 /app/build/
+/bot/build/
+/core/build/
 /build/
+/bot-data/
 
 # Android Studio / IntelliJ
 .idea/
