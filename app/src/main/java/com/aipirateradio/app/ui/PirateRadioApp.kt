@@ -378,27 +378,33 @@ private fun NowPlayingCard(
     Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White)) {
         Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(status, style = MaterialTheme.typography.labelLarge, color = Color(0xFF35605A))
-            Text(musicStatus, style = MaterialTheme.typography.bodySmall, color = Color(0xFF7A4E2D))
-            Text(djStatus, style = MaterialTheme.typography.bodySmall, color = Color(0xFF52616B))
-            Text(showStatus, style = MaterialTheme.typography.bodySmall, color = Color(0xFF35605A))
-            Text(decision?.selectedSong?.title ?: "No song selected", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text(decision?.selectedSong?.artist ?: "Tap Next Pick to let the Station Manager choose.", style = MaterialTheme.typography.bodyLarge, color = Color(0xFF52616B))
+            CompactStatusLines(
+                musicStatus = musicStatus,
+                djStatus = djStatus,
+                showStatus = showStatus
+            )
+            decision?.let {
+                Text(it.selectedSong.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(it.selectedSong.artist, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF52616B))
+            }
             VibePicker(selectedVibe, onVibeSelected)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onGrantMusic, modifier = Modifier.weight(1f)) { Text("Grant Music") }
                     Button(onRefreshMusic, modifier = Modifier.weight(1f)) { Text("Refresh") }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onPrepareShow, modifier = Modifier.weight(1f)) { Text("Prepare Show") }
                     Button(onNext, modifier = Modifier.weight(1f)) { Text("Next Pick") }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onPlayShow, modifier = Modifier.weight(1f)) { Text("Play Show") }
                     Button(onPlaySegues, modifier = Modifier.weight(1f)) { Text("Play Segues") }
                 }
-                Button(onCopySegues, modifier = Modifier.fillMaxWidth()) { Text("Copy Segues") }
-                Button(onClearHistory, modifier = Modifier.fillMaxWidth()) { Text("Clear History") }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onCopySegues, modifier = Modifier.weight(1f)) { Text("Copy Segues") }
+                    Button(onClearHistory, modifier = Modifier.weight(1f)) { Text("Clear History") }
+                }
             }
             preparedShow?.takeIf { it.tracks.isNotEmpty() }?.let { show ->
                 Text("${show.tracks.size} songs prepared for offline playback", style = MaterialTheme.typography.bodyMedium, color = Color(0xFF52616B))
@@ -415,15 +421,33 @@ private fun NowPlayingCard(
 }
 
 @Composable
+private fun CompactStatusLines(
+    musicStatus: String,
+    djStatus: String,
+    showStatus: String
+) {
+    val lines = listOfNotNull(
+        showStatus.takeUnless { it == "No show prepared" },
+        musicStatus.takeUnless { it == "Local music idle" },
+        djStatus.takeUnless { it == "DJ idle" }
+    ).take(2)
+    lines.forEach { line ->
+        Text(line, style = MaterialTheme.typography.bodySmall, color = Color(0xFF52616B))
+    }
+}
+
+@Composable
 private fun VibePicker(selectedVibe: RadioVibe, onVibeSelected: (RadioVibe) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("Vibe", style = MaterialTheme.typography.labelLarge, color = Color(0xFF35605A))
-        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text(selectedVibe.name) }
-        Button(onClick = {
-            val choices = RadioVibes.all.filterNot { it.id == selectedVibe.id }.ifEmpty { RadioVibes.all }
-            onVibeSelected(choices.random(Random.Default))
-        }, modifier = Modifier.fillMaxWidth()) { Text("Random Vibe") }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = { expanded = true }, modifier = Modifier.weight(1f)) { Text(selectedVibe.name) }
+            Button(onClick = {
+                val choices = RadioVibes.all.filterNot { it.id == selectedVibe.id }.ifEmpty { RadioVibes.all }
+                onVibeSelected(choices.random(Random.Default))
+            }, modifier = Modifier.weight(1f)) { Text("Random") }
+        }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             RadioVibes.all.forEach { vibe ->
                 DropdownMenuItem(
@@ -440,8 +464,6 @@ private fun VibePicker(selectedVibe: RadioVibe, onVibeSelected: (RadioVibe) -> U
                 )
             }
         }
-        Text(selectedVibe.description, style = MaterialTheme.typography.bodySmall, color = Color(0xFF52616B))
-        Text(selectedVibe.artists.joinToString(" / "), style = MaterialTheme.typography.bodySmall, color = Color(0xFF7A4E2D))
     }
 }
 
