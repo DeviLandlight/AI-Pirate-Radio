@@ -1,0 +1,34 @@
+# Local machine config
+local.properties
+
+# Gradle
+/.gradle/
+/app/build/
+/build/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Android generated files
+captures/
+.externalNativeBuild/
+.cxx/
+
+# APKs / bundles
+*.apk
+*.ap_
+*.aab
+
+# Keystores
+*.jks
+*.keystore
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
