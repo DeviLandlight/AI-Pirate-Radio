@@ -1,0 +1,12 @@
+[
+  {
+    "id": "sample_1",
+    "audioUri": "",
+    "title": "Time Is Running Out",
+    "artist": "Muse",
+    "album": "Absolution",
+    "releaseYear": 2003,
+    "genreTags": ["alt rock", "rock"],
+    "moodTags": ["urgent", "dramatic"]
+  }
+]
