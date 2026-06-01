@@ -23,6 +23,10 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+        }
+
         resValue("string", "lastfm_api_key", localProperties.getProperty("lastfm.apiKey", ""))
         resValue("string", "openai_api_key", localProperties.getProperty("openai.apiKey", ""))
         resValue("string", "openai_text_model", localProperties.getProperty("openai.textModel", "gpt-4o-mini"))
@@ -62,6 +66,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.10.1")
+    implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
+    implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 

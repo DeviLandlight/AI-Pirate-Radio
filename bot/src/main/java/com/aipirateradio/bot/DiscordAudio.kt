@@ -57,11 +57,12 @@ class DiscordAudioPlayer(
     fun play(song: Song): Boolean {
         val path = song.localPathOrNull() ?: return false
         if (!Files.isRegularFile(path)) return false
-        return if (isFfmpegAvailable()) {
-            playWithFfmpeg(path.toString())
-        } else {
-            false
-        }
+        return playFile(path.toString())
+    }
+
+    fun playFile(path: String): Boolean {
+        if (!isFfmpegAvailable()) return false
+        return playWithFfmpeg(path)
     }
 
     fun isFfmpegAvailable(): Boolean {

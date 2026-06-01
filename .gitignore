@@ -3,11 +3,13 @@ local.properties
 
 # Gradle
 /.gradle/
+/.gradle-inspect/
 /app/build/
 /bot/build/
 /core/build/
 /build/
 /bot-data/
+/bot/bot-data/
 
 # Android Studio / IntelliJ
 .idea/

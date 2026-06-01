@@ -8,6 +8,7 @@
 
     <application
         android:allowBackup="true"
+        android:extractNativeLibs="true"
         android:label="AI Pirate Radio"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">

@@ -11,11 +11,18 @@ $env:DISCORD_TOKEN="your bot token"
 $env:MUSIC_LIBRARY_PATH="C:\Path\To\Music"
 $env:BOT_DATA_PATH="bot-data"
 $env:BOT_HISTORY_LIMIT="240"
+$env:YTDLP_PATH="yt-dlp"
+$env:DJ_VOICE="optional installed Windows voice name"
+$env:DJ_VOICE_RATE="1"
+$env:DJ_VOICE_VOLUME="100"
+$env:DJ_TTS_PROVIDER="windows"
+$env:OPENAI_TTS_MODEL="gpt-4o-mini-tts"
+$env:OPENAI_TTS_VOICE="coral"
 $env:LASTFM_API_KEY="optional, for planning shows beyond your local files"
 $env:OPENAI_API_KEY="optional"
 ```
 
-Install `ffmpeg` and make sure it is available on `PATH`; the bot uses it to stream local audio files into Discord as 48kHz stereo PCM.
+Install `ffmpeg` and make sure it is available on `PATH`; the bot uses it to stream local audio files into Discord as 48kHz stereo PCM. Install `yt-dlp` if you want the bot to download missing tracks for prepared shows.
 
 Then run:
 
@@ -27,12 +34,21 @@ Then run:
 
 - `/join` joins your current voice channel.
 - `/prepare` prepares a radio show from your local music folder or the sample catalog.
+- `/vibes` lists built-in vibe names/ids and artist seeds for `/prepare`.
 - `/queue` shows the prepared show.
 - `/refresh` matches the prepared show against files you downloaded after preparing.
+- `/download-missing` uses `yt-dlp` to download missing prepared tracks into `MUSIC_LIBRARY_PATH`.
 - `/play` plays the prepared show in voice.
+- `/clear-history` clears saved song/artist history for your current voice channel.
+- `/test-dj` speaks a short DJ test line in your current voice channel.
+- `/voices` lists installed Windows voices for DJ speech.
 - `/status` checks whether the bot can see your music folder and `ffmpeg`.
 - `/stop` stops playback and leaves voice.
 
 Prepared shows and play history are saved under `BOT_DATA_PATH`, defaulting to `bot-data` in the project folder. This folder is ignored by git because it can contain personal listening history.
 
 `BOT_HISTORY_LIMIT` controls how many planned/played songs are remembered per server voice channel. The station planner uses that saved history to avoid recent song and artist repeats.
+
+`/download-missing` searches YouTube via `yt-dlp` and extracts audio to mp3. Only use it for content you have rights to download.
+
+Set `DJ_TTS_PROVIDER=openai` to use OpenAI speech for DJ segues. It requires `OPENAI_API_KEY`. `OPENAI_TTS_VOICE` can be changed, for example to `coral`, `verse`, or `alloy`.

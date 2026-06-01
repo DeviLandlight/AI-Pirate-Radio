@@ -40,6 +40,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aipirateradio.app.local.AndroidLocalAudioPlayer
 import com.aipirateradio.app.local.AndroidLocalDjAnnouncer
+import com.aipirateradio.app.local.AndroidYtDlpDownloader
+import com.aipirateradio.app.local.DownloadSummary
 import com.aipirateradio.app.local.LocalMusicLibrary
 import com.aipirateradio.app.local.LocalMusicRecommender
 import com.aipirateradio.app.local.LocalTrackResolver
@@ -109,6 +111,7 @@ private fun StationScreen(
     val localLibrary = remember(context) { LocalMusicLibrary(context) }
     val localPlayer = remember(context) { AndroidLocalAudioPlayer(context) { musicStatus = it } }
     val localDjAnnouncer = remember(context) { AndroidLocalDjAnnouncer(context) { djStatus = it } }
+    val autoDownloader = remember(context) { AndroidYtDlpDownloader(context) { musicStatus = it } }
 
     LaunchedEffect(Unit) {
         preparedShow?.let { show -> showStatus = "Loaded saved show with ${show.tracks.size} songs." }
@@ -143,13 +146,37 @@ private fun StationScreen(
                                 track.copy(song = resolver.resolve(track.song) ?: track.song)
                             }
                         )
-                        preparedShow = refreshedShow
-                        savedShowStore.save(refreshedShow)
-                        val missing = refreshedShow.tracks.count { !it.song.isLocalAudio() }
-                        showStatus = if (missing == 0) {
-                            "Offline show ready with ${refreshedShow.tracks.size} local songs."
+                        val missingTracks = refreshedShow.tracks.filter { !it.song.isLocalAudio() }
+                        if (missingTracks.isEmpty()) {
+                            preparedShow = refreshedShow
+                            savedShowStore.save(refreshedShow)
+                            showStatus = "Offline show ready with ${refreshedShow.tracks.size} local songs."
                         } else {
-                            "Refreshed show: ${refreshedShow.tracks.size - missing} ready, $missing need downloading."
+                            showStatus = "Refreshed show: ${refreshedShow.tracks.size - missingTracks.size} ready. Retrying ${missingTracks.size} missing downloads."
+                            val downloadSummary = runCatching {
+                                autoDownloader.downloadMissing(missingTracks.map { it.song }, maxDownloads = missingTracks.size)
+                            }.getOrElse {
+                                preparedShow = refreshedShow
+                                savedShowStore.save(refreshedShow)
+                                showStatus = "Refresh found ${missingTracks.size} missing, but retry failed: ${it.readableMessage()}."
+                                return@launch
+                            }
+                            val retriedShow = refreshedShow.copy(
+                                tracks = refreshedShow.tracks.map { track ->
+                                    val downloadedAudioUri = downloadSummary.downloadedAudioUris[track.song.id]
+                                    if (downloadedAudioUri != null) {
+                                        track.copy(song = track.song.copy(audioUri = downloadedAudioUri))
+                                    } else {
+                                        track.copy(song = resolver.resolve(track.song) ?: track.song)
+                                    }
+                                }
+                            )
+                            preparedShow = retriedShow
+                            savedShowStore.save(retriedShow)
+                            showStatus = retriedShow.downloadStatusMessage(
+                                downloadSummary = downloadSummary,
+                                action = "Retry complete"
+                            )
                         }
                     }
                 }
@@ -294,6 +321,29 @@ private fun StationScreen(
                         return@launch
                     }
                     val missing = show.tracks.count { !it.song.isLocalAudio() }
+                    if (missing > 0) {
+                        showStatus = "Show plan ready: ${show.tracks.size} songs. Downloading $missing missing tracks."
+                        val downloadSummary = runCatching {
+                            autoDownloader.downloadMissing(show.tracks.map { it.song })
+                        }.getOrElse {
+                            showStatus = "Show ready, but automatic downloads failed: ${it.readableMessage()}."
+                            return@launch
+                        }
+                        val refreshedShow = show.copy(
+                            tracks = show.tracks.map { track ->
+                                val downloadedAudioUri = downloadSummary.downloadedAudioUris[track.song.id]
+                                if (downloadedAudioUri != null) {
+                                    track.copy(song = track.song.copy(audioUri = downloadedAudioUri))
+                                } else {
+                                    track.copy(song = LocalTrackResolver(localLibrary).resolve(track.song) ?: track.song)
+                                }
+                            }
+                        )
+                        preparedShow = refreshedShow
+                        savedShowStore.save(refreshedShow)
+                        showStatus = refreshedShow.downloadStatusMessage(downloadSummary, "Downloads complete")
+                        return@launch
+                    }
                     showStatus = if (missing == 0) {
                         "Offline show ready with ${show.tracks.size} local songs."
                     } else {
@@ -494,6 +544,13 @@ private fun DecisionPanel(decision: StationDecision?) {
 
 private fun Throwable.readableMessage(): String = message?.takeIf { it.isNotBlank() } ?: javaClass.simpleName
 private fun com.aipirateradio.app.station.Song.isLocalAudio(): Boolean = audioUri.startsWith("content://") || audioUri.startsWith("file://")
+private fun PreparedShow.downloadStatusMessage(downloadSummary: DownloadSummary, action: String): String {
+    val stillMissing = tracks.count { !it.song.isLocalAudio() }
+    val ready = tracks.size - stillMissing
+    val failedNames = downloadSummary.failedSongs.take(2).joinToString()
+    val failedText = if (downloadSummary.failedSongs.isEmpty()) "" else " Still missing: $failedNames${if (downloadSummary.failedSongs.size > 2) "..." else ""}."
+    return "$action: ${downloadSummary.downloaded} downloaded, ${downloadSummary.failed} failed. $ready ready, $stillMissing need refresh/download.$failedText"
+}
 private fun PreparedShow.formatSeguesForSharing(): String {
     return tracks.mapIndexedNotNull { index, track ->
         val segue = track.segueText?.takeIf { it.isNotBlank() } ?: return@mapIndexedNotNull null
