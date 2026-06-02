@@ -10,6 +10,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
 import java.time.Duration
+import java.util.concurrent.TimeUnit
 import kotlin.io.path.extension
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.nameWithoutExtension
@@ -36,10 +37,35 @@ class DesktopMusicLibrary(
             audioUri = toUri().toString(),
             title = title,
             artist = artist,
-            duration = Duration.ofMinutes(3),
+            duration = probeDuration() ?: Duration.ofMinutes(3),
             genreTags = listOf("desktop"),
             moodTags = emptyList()
         )
+    }
+
+    private fun Path.probeDuration(): Duration? {
+        val process = runCatching {
+            ProcessBuilder(
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                toString()
+            ).redirectErrorStream(true).start()
+        }.getOrNull() ?: return null
+
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        val finished = process.waitFor(5, TimeUnit.SECONDS)
+        if (!finished) {
+            process.destroyForcibly()
+            return null
+        }
+        val seconds = output.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.toDoubleOrNull() ?: return null
+        if (!seconds.isFinite() || seconds <= 0.0) return null
+        return Duration.ofMillis((seconds * 1000).toLong())
     }
 
     private fun parseArtistTitle(name: String): Pair<String, String> {

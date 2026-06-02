@@ -40,6 +40,8 @@ class AndroidYtDlpDownloader(
             request.addOption("--extract-audio")
             request.addOption("--audio-format", "mp3")
             request.addOption("--audio-quality", "0")
+            request.addOption("--embed-thumbnail")
+            request.addOption("--convert-thumbnails", "jpg")
             request.addOption("--output", outputTemplate.absolutePath)
             val result = runCatching {
                 YoutubeDL.getInstance().execute(request) { progress, etaInSeconds, _ ->

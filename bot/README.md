@@ -11,6 +11,7 @@ $env:DISCORD_TOKEN="your bot token"
 $env:MUSIC_LIBRARY_PATH="C:\Path\To\Music"
 $env:BOT_DATA_PATH="bot-data"
 $env:BOT_HISTORY_LIMIT="240"
+$env:VISUALIZER_PORT="8787"
 $env:YTDLP_PATH="yt-dlp"
 $env:DJ_VOICE="optional installed Windows voice name"
 $env:DJ_VOICE_RATE="1"
@@ -34,8 +35,12 @@ Then run:
 
 - `/join` joins your current voice channel.
 - `/prepare` prepares a radio show from your local music folder or the sample catalog.
+- `/prepare-next` appends another radio block after the current queue so playback can continue without stopping.
+- `/prepare-local` prepares a radio show using only files already in your music folder.
 - `/vibes` lists built-in vibe names/ids and artist seeds for `/prepare`.
 - `/queue` shows the prepared show.
+- `/request` adds a listener request to the current prepared show. It accepts `Artist - Song`, `Song by Artist`, or just an artist name so the station can pick a fitting song.
+- `/ask` queues a call-in question for the DJ to answer over voice between songs.
 - `/refresh` matches the prepared show against files you downloaded after preparing.
 - `/download-missing` uses `yt-dlp` to download missing prepared tracks into `MUSIC_LIBRARY_PATH`.
 - `/play` plays the prepared show in voice.
@@ -43,6 +48,7 @@ Then run:
 - `/test-dj` speaks a short DJ test line in your current voice channel.
 - `/voices` lists installed Windows voices for DJ speech.
 - `/status` checks whether the bot can see your music folder and `ffmpeg`.
+- `/pause` stops playback and saves the next track so `/play` can resume later.
 - `/stop` stops playback and leaves voice.
 
 Prepared shows and play history are saved under `BOT_DATA_PATH`, defaulting to `bot-data` in the project folder. This folder is ignored by git because it can contain personal listening history.
@@ -51,4 +57,10 @@ Prepared shows and play history are saved under `BOT_DATA_PATH`, defaulting to `
 
 `/download-missing` searches YouTube via `yt-dlp` and extracts audio to mp3. Only use it for content you have rights to download.
 
+`/request` allows one accepted request per user every 20 minutes, rejects exact song repeats from the current queue/recent history, and uses the OpenAI text model to reject only clearly off-vibe requests. If you request only an artist, the bot tries your local library first, then Last.fm, and asks you to run `/download-missing` if the picked song is not local yet.
+
+`/ask` allows one call-in question per user every 15 minutes. The DJ answers queued questions between songs, using the current set as the frame even when the question is not strictly about music.
+
 Set `DJ_TTS_PROVIDER=openai` to use OpenAI speech for DJ segues. It requires `OPENAI_API_KEY`. `OPENAI_TTS_VOICE` can be changed, for example to `coral`, `verse`, or `alloy`.
+
+The bot also starts a local visualizer page by default at `http://localhost:8787`. Set `VISUALIZER_PORT=0` to disable it, or set another port if `8787` is already in use.

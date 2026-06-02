@@ -40,6 +40,10 @@ object OpenAiPrompts {
             Target length: ${request.type.targetSeconds}.
             $typeInstruction
             Sound like an informed human DJ, not marketing copy.
+            Use only the verified facts below for factual claims. Do not invent recording details, chart history, band history, or behind-the-scenes anecdotes.
+            If verified facts are empty or not useful, make a musical observation instead.
+            Avoid driving, road, lane, highway, engine, gear, and travel metaphors unless the song title or artist directly calls for it.
+            Prefer concrete musical language: texture, tempo, mood, era, production, vocals, guitars, rhythm section, contrast, tension, release, warmth, grit, polish, atmosphere.
             Do not say every song is a gem, classic, anthem, masterpiece, journey, or perfect fit.
             Neutral phrasing is allowed: deeper cut, fan favorite, divisive, overlooked, odd little track, not the obvious pick.
             Previous song: ${previous?.let { "${it.artist} - ${it.title}" } ?: "none"}
@@ -49,6 +53,8 @@ object OpenAiPrompts {
             Artist: ${song.artist}
             Album: ${song.album.orEmpty()}
             Release year: ${song.releaseYear ?: "unknown"}
+            Verified facts:
+            ${request.verifiedFacts.take(4).joinToString("\n") { "- $it" }.ifBlank { "- none" }}
             Return JSON only with fact and segueText. Use an empty fact string when the segue is not factual.
         """.trimIndent()
     }

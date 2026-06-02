@@ -23,7 +23,8 @@ data class SegueRequest(
     val type: SegueType = SegueType.TRANSITION,
     val previousSong: Song? = null,
     val showTheme: String? = null,
-    val isNewArtist: Boolean = false
+    val isNewArtist: Boolean = false,
+    val verifiedFacts: List<String> = emptyList()
 )
 
 interface SongPicker {
@@ -80,20 +81,23 @@ class LocalSegueWriter : SegueWriter {
         val previous = request.previousSong
         val album = song.album?.let { " off $it" }.orEmpty()
         val year = song.releaseYear?.let { " from $it" }.orEmpty()
+        val fact = request.verifiedFacts.firstOrNull().orEmpty()
         val text = when (request.type) {
             SegueType.TRANSITION -> if (previous == null) {
                 "Let's start this stretch with ${song.artist} and ${song.title}$album$year."
             } else {
-                "From ${previous.artist}, let's shift into ${song.artist} with ${song.title}."
+                "After ${previous.artist}, here is ${song.artist} with ${song.title}."
             }
-            SegueType.FACT -> "A little deeper into the set now: ${song.artist}, with ${song.title}$album$year."
-            SegueType.HISTORY -> "This next one sits a little deeper in the catalog. Here's ${song.artist} with ${song.title}."
-            SegueType.THEME -> "Tonight's show is circling ${request.showTheme ?: "songs that carry a drive"}. First up, ${song.artist} with ${song.title}."
-            SegueType.DISCOVERY -> "If ${previous?.artist ?: "the last artist"} is in your lane, keep an ear on this next one: ${song.artist}, ${song.title}."
-            SegueType.PERSONAL_OBSERVATION -> "This one feels like a late-night highway song: ${song.artist}, ${song.title}."
+            SegueType.FACT -> fact.takeIf { it.isNotBlank() }?.let { "$it Here is ${song.artist} with ${song.title}." }
+                ?: "A little deeper into the set now: ${song.artist}, with ${song.title}$album$year."
+            SegueType.HISTORY -> fact.takeIf { it.isNotBlank() }?.let { "$it Now ${song.artist}, ${song.title}." }
+                ?: "This next one sits a little deeper in the catalog. Here's ${song.artist} with ${song.title}."
+            SegueType.THEME -> "Tonight's show is circling ${request.showTheme ?: "a focused set of hand-picked songs"}. First up, ${song.artist} with ${song.title}."
+            SegueType.DISCOVERY -> "If ${previous?.artist ?: "the last artist"} caught your ear, keep this next one close: ${song.artist}, ${song.title}."
+            SegueType.PERSONAL_OBSERVATION -> "This one puts the texture up front: ${song.artist}, ${song.title}."
             SegueType.SILENCE -> ""
         }
-        return SegueResult("", text)
+        return SegueResult(fact, text)
     }
 }
 

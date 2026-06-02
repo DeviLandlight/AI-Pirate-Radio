@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Radio Skittles</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="city"></div>
+  <main>
+    <section class="stack">
+      <div class="panel brand">
+        <h1>Radio</h1>
+        <div class="radio">Skittles</div>
+      </div>
+      <div class="panel">
+        <div class="label">Now Playing</div>
+        <div class="song">
+          <div class="cover" id="cover"><img id="coverImage" alt=""><span id="coverText">RADIO<br>SKITTLES</span></div>
+          <div>
+            <div class="title" id="title">Waiting for signal</div>
+            <div class="artist" id="artist">Start the bot show</div>
+            <div class="progress"><span id="progress"></span></div>
+            <div class="time-row"><span id="elapsed">0:00</span><span id="duration">0:00</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="label">Current Vibe</div>
+        <p class="meta" id="vibe">Emotional Authentic Rock</p>
+      </div>
+    </section>
+    <section>
+      <div class="bars" id="bars"></div>
+      <div class="panel station-panel">
+        <div class="label" id="station">Radio Skittles</div>
+        <p class="meta" id="dj">Waiting for the signal.</p>
+      </div>
+    </section>
+    <section class="stack">
+      <div class="status-wrap"><div class="onair" id="status">Idle</div></div>
+      <div class="panel">
+        <div class="label">Why this song?</div>
+        <p class="meta" id="pickReason">Chosen from your local library based on freshness, artist spacing, and station flow.</p>
+      </div>
+      <div class="panel">
+        <div class="label">Up Next</div>
+        <div class="queue" id="queue"></div>
+      </div>
+    </section>
+  </main>
+  <footer>
+    <span>Listen</span>
+    <span>Relax</span>
+    <span>Request a song: /request</span>
+    <a class="external-link" href="https://radio-skittles.com" target="_blank" rel="noopener">Open Webpage</a>
+    <button class="view-toggle" id="viewToggle" type="button">Full View</button>
+  </footer>
+  <script src="./config.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

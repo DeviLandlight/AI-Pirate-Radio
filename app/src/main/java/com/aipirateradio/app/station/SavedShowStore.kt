@@ -17,8 +17,16 @@ class SavedShowStore(context: Context) {
         return runCatching { JSONObject(raw).toPreparedShow() }.getOrNull()
     }
 
+    fun saveNextTrackIndex(index: Int) {
+        preferences.edit().putInt(KEY_NEXT_TRACK_INDEX, index.coerceAtLeast(0)).commit()
+    }
+
+    fun loadNextTrackIndex(): Int {
+        return preferences.getInt(KEY_NEXT_TRACK_INDEX, 0).coerceAtLeast(0)
+    }
+
     fun clear() {
-        preferences.edit().remove(KEY_SHOW).commit()
+        preferences.edit().remove(KEY_SHOW).remove(KEY_NEXT_TRACK_INDEX).commit()
     }
 
     private fun PreparedShow.toJson(): JSONObject {
@@ -56,6 +64,7 @@ class SavedShowStore(context: Context) {
 
     private companion object {
         const val KEY_SHOW = "show_json"
+        const val KEY_NEXT_TRACK_INDEX = "next_track_index"
     }
 }
 

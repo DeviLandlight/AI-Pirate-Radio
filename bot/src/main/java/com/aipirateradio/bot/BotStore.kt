@@ -25,7 +25,13 @@ class BotStore(
             val json = JSONObject(file.readText())
             PersistedRadioSession(
                 preparedShow = json.optJSONObject("preparedShow")?.toPreparedShow(),
-                history = json.optJSONArray("history").toPlayRecords()
+                history = json.optJSONArray("history").toPlayRecords(),
+                nextTrackIndex = json.optInt("nextTrackIndex", 0).coerceAtLeast(0),
+                vibeLabel = json.optString("vibeLabel").takeIf { it.isNotBlank() } ?: "Emotional Authentic Rock",
+                queueVibes = json.optJSONArray("queueVibes").toStringList(),
+                requestCooldowns = json.optJSONObject("requestCooldowns").toInstantMap(),
+                callIns = json.optJSONArray("callIns").toCallIns(),
+                askCooldowns = json.optJSONObject("askCooldowns").toInstantMap()
             )
         }.getOrDefault(PersistedRadioSession())
     }
@@ -35,6 +41,12 @@ class BotStore(
         val json = JSONObject()
             .put("preparedShow", session.preparedShow?.toJson())
             .put("history", JSONArray().also { array -> session.history.forEach { array.put(it.toJson()) } })
+            .put("nextTrackIndex", session.nextTrackIndex)
+            .put("vibeLabel", session.vibeLabel)
+            .put("queueVibes", JSONArray(session.queueVibes))
+            .put("requestCooldowns", session.requestCooldowns.toJson())
+            .put("callIns", JSONArray().also { array -> session.callIns.forEach { array.put(it.toJson()) } })
+            .put("askCooldowns", session.askCooldowns.toJson())
         sessionFile(key).writeText(json.toString(2))
     }
 
@@ -46,7 +58,13 @@ class BotStore(
 
 data class PersistedRadioSession(
     val preparedShow: PreparedShow? = null,
-    val history: List<PlayRecord> = emptyList()
+    val history: List<PlayRecord> = emptyList(),
+    val nextTrackIndex: Int = 0,
+    val vibeLabel: String = "Emotional Authentic Rock",
+    val queueVibes: List<String> = emptyList(),
+    val requestCooldowns: Map<Long, Instant> = emptyMap(),
+    val callIns: List<CallInQuestion> = emptyList(),
+    val askCooldowns: Map<Long, Instant> = emptyMap()
 )
 
 fun defaultBotDataPath(): Path = Path.of("bot-data")
@@ -162,4 +180,49 @@ private fun JSONArray?.toStringList(): List<String> {
             optString(i).takeIf { it.isNotBlank() }?.let { add(it) }
         }
     }
+}
+
+private fun Map<Long, Instant>.toJson(): JSONObject {
+    return JSONObject().also { json ->
+        forEach { (userId, timestamp) -> json.put(userId.toString(), timestamp.toString()) }
+    }
+}
+
+private fun JSONObject?.toInstantMap(): Map<Long, Instant> {
+    if (this == null) return emptyMap()
+    return buildMap {
+        keys().forEach { key ->
+            val userId = key.toLongOrNull() ?: return@forEach
+            val timestamp = runCatching { Instant.parse(optString(key)) }.getOrNull() ?: return@forEach
+            put(userId, timestamp)
+        }
+    }
+}
+
+private fun JSONArray?.toCallIns(): List<CallInQuestion> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (i in 0 until length()) {
+            optJSONObject(i)?.toCallIn()?.let { add(it) }
+        }
+    }
+}
+
+private fun JSONObject.toCallIn(): CallInQuestion? {
+    val askedAt = runCatching { Instant.parse(optString("askedAt")) }.getOrNull() ?: return null
+    val question = optString("question").takeIf { it.isNotBlank() } ?: return null
+    return CallInQuestion(
+        userId = optLong("userId"),
+        displayName = optString("displayName").takeIf { it.isNotBlank() } ?: "caller",
+        question = question,
+        askedAt = askedAt
+    )
+}
+
+private fun CallInQuestion.toJson(): JSONObject {
+    return JSONObject()
+        .put("userId", userId)
+        .put("displayName", displayName)
+        .put("question", question)
+        .put("askedAt", askedAt.toString())
 }

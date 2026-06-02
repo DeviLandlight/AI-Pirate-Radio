@@ -69,6 +69,7 @@ import com.aipirateradio.app.station.StationDecision
 import com.aipirateradio.app.station.StationEngine
 import com.aipirateradio.app.station.StationManager
 import com.aipirateradio.app.station.StationRules
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.time.Instant
 import kotlin.random.Random
@@ -103,6 +104,8 @@ private fun StationScreen(
     val savedShowStore = remember(context) { SavedShowStore(context) }
     val showHistoryStore = remember(context) { ShowHistoryStore(context) }
     var preparedShow by remember { mutableStateOf(savedShowStore.load()) }
+    var nextShowTrackIndex by remember { mutableStateOf(savedShowStore.loadNextTrackIndex()) }
+    var showPlaybackJob by remember { mutableStateOf<Job?>(null) }
     var selectedVibe by remember { mutableStateOf(RadioVibes.default) }
     val lastFmApiKey = remember(context) { context.getString(com.aipirateradio.app.R.string.lastfm_api_key) }
     val openAiApiKey = remember(context) { context.getString(com.aipirateradio.app.R.string.openai_api_key) }
@@ -182,7 +185,11 @@ private fun StationScreen(
                 }
             },
             onPlayShow = {
-                scope.launch {
+                if (showPlaybackJob?.isActive == true) {
+                    showStatus = "Show is already playing."
+                    return@NowPlayingCard
+                }
+                showPlaybackJob = scope.launch {
                     val show = preparedShow
                     if (show == null || show.tracks.isEmpty()) {
                         showStatus = "Prepare a show before playback."
@@ -193,15 +200,24 @@ private fun StationScreen(
                         requestLocalAudioAccess { message -> musicStatus = message }
                         return@launch
                     }
-                    showStatus = "Playing prepared local show."
+                    val startIndex = nextShowTrackIndex.coerceIn(0, show.tracks.size)
+                    if (startIndex >= show.tracks.size) {
+                        showStatus = "Show already finished. Prepare a new show to start fresh."
+                        return@launch
+                    }
+                    showStatus = if (startIndex == 0) "Playing prepared local show." else "Resuming show at ${startIndex + 1}/${show.tracks.size}."
                     var played = 0
                     var missing = 0
-                    show.tracks.forEach { track ->
+                    show.tracks.drop(startIndex).forEachIndexed { offset, track ->
+                        val index = startIndex + offset
+                        nextShowTrackIndex = (index + 1).coerceAtMost(show.tracks.size)
+                        savedShowStore.saveNextTrackIndex(nextShowTrackIndex)
                         val playableSong = LocalTrackResolver(localLibrary).resolve(track.song)
                         if (playableSong == null || !playableSong.isLocalAudio()) {
                             missing += 1
                             showStatus = "Missing local file: ${track.song.artist} - ${track.song.title}."
                         } else {
+                            showStatus = "Playing ${index + 1}/${show.tracks.size}: ${track.song.artist} - ${track.song.title}."
                             localDjAnnouncer.speak(track.segueText)
                             localPlayer.play(playableSong)
                             localPlayer.awaitTrackEnd(playableSong)
@@ -214,6 +230,12 @@ private fun StationScreen(
                         "Show complete: played $played, missing $missing."
                     }
                 }
+            },
+            onPauseShow = {
+                showPlaybackJob?.cancel()
+                showPlaybackJob = null
+                localPlayer.stop()
+                showStatus = "Show paused. Next play resumes at ${nextShowTrackIndex + 1}."
             },
             onPlaySegues = {
                 scope.launch {
@@ -265,9 +287,14 @@ private fun StationScreen(
                     } else {
                         "Preparing a 12-song show plan with ${planningHistory.size} recent planned songs avoided."
                     }
-                    val recommender = if (lastFmApiKey.isNotBlank()) {
-                        musicStatus = "Using Last.fm to plan the show."
+                    val lastFmClient = if (lastFmApiKey.isNotBlank()) {
                         LastFmClient(apiKeyProvider = { lastFmApiKey.trim() })
+                    } else {
+                        null
+                    }
+                    val recommender = if (lastFmClient != null) {
+                        musicStatus = "Using Last.fm to plan the show."
+                        lastFmClient
                     } else if (localSongs.size >= 6) {
                         musicStatus = "Planning from ${localSongs.size} local songs."
                         LocalMusicRecommender(localLibrary)
@@ -294,7 +321,8 @@ private fun StationScreen(
                         musicRecommender = recommender,
                         songPicker = if (openAiClient == null) localPicker else FallbackSongPicker(openAiClient, localPicker) { djStatus = it },
                         segueWriter = if (openAiClient == null) localSegue else FallbackSegueWriter(openAiClient, localSegue) { djStatus = it },
-                        trackResolver = LocalTrackResolver(localLibrary.takeIf { localLibrary.hasAudioPermission() }, allowUnmatchedPlannedSongs = true)
+                        trackResolver = LocalTrackResolver(localLibrary.takeIf { localLibrary.hasAudioPermission() }, allowUnmatchedPlannedSongs = true),
+                        trackFactFinder = lastFmClient ?: com.aipirateradio.app.station.EmptyTrackFactFinder
                     )
                     val show = runCatching {
                         preparer.prepareShow(
@@ -315,6 +343,8 @@ private fun StationScreen(
                     }
                     preparedShow = show
                     savedShowStore.save(show)
+                    nextShowTrackIndex = 0
+                    savedShowStore.saveNextTrackIndex(0)
                     showHistoryStore.recordPreparedShow(show, selectedVibe.id)
                     if (show.tracks.isEmpty()) {
                         showStatus = "No songs were found for the show plan."
@@ -419,6 +449,7 @@ private fun NowPlayingCard(
     onGrantMusic: () -> Unit,
     onRefreshMusic: () -> Unit,
     onPlayShow: () -> Unit,
+    onPauseShow: () -> Unit,
     onPlaySegues: () -> Unit,
     onCopySegues: () -> Unit,
     onClearHistory: () -> Unit,
@@ -449,10 +480,13 @@ private fun NowPlayingCard(
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onPlayShow, modifier = Modifier.weight(1f)) { Text("Play Show") }
-                    Button(onPlaySegues, modifier = Modifier.weight(1f)) { Text("Play Segues") }
+                    Button(onPauseShow, modifier = Modifier.weight(1f)) { Text("Pause Show") }
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onPlaySegues, modifier = Modifier.weight(1f)) { Text("Play Segues") }
                     Button(onCopySegues, modifier = Modifier.weight(1f)) { Text("Copy Segues") }
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClearHistory, modifier = Modifier.weight(1f)) { Text("Clear History") }
                 }
             }

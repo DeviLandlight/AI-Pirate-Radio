@@ -88,6 +88,7 @@ class DiscordAudioPlayer(
             "pipe:1"
         ).redirectErrorStream(true).start()
 
+        var chunksQueued = 0
         BufferedInputStream(process.inputStream).use { input ->
             val buffer = ByteArray(PCM_20_MS_BYTES)
             while (!stopped.get()) {
@@ -95,10 +96,11 @@ class DiscordAudioPlayer(
                 if (read <= 0) break
                 val chunk = if (read == buffer.size) buffer.copyOf() else buffer.copyOf(read).paddedPcmChunk()
                 if (!sendHandler.offer(chunk, stopped)) break
+                chunksQueued += 1
             }
         }
         if (stopped.get()) process.destroyForcibly() else process.waitFor(2, TimeUnit.SECONDS)
-        return true
+        return chunksQueued > 0
     }
 
     private fun BufferedInputStream.readFullyOrPartial(buffer: ByteArray): Int {

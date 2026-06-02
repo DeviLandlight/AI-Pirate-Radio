@@ -15,7 +15,8 @@ class ShowPreparer(
     private val musicRecommender: MusicRecommender,
     private val songPicker: SongPicker,
     private val segueWriter: SegueWriter,
-    private val trackResolver: TrackResolver
+    private val trackResolver: TrackResolver,
+    private val trackFactFinder: TrackFactFinder = EmptyTrackFactFinder
 ) {
     suspend fun prepareShow(
         recommendationRequest: RecommendationRequest,
@@ -53,7 +54,8 @@ class ShowPreparer(
             val segue = if (segueType == SegueType.SILENCE) {
                 null
             } else {
-                segueWriter.writeSegue(SegueRequest(playableSong, segueType, previousSong, showTheme, isNewArtist))
+                val facts = runCatching { trackFactFinder.factsFor(playableSong) }.getOrDefault(emptyList())
+                segueWriter.writeSegue(SegueRequest(playableSong, segueType, previousSong, showTheme, isNewArtist, facts))
             }
 
             tracks += PreparedShowTrack(playableSong, segue?.text, pick?.reason)

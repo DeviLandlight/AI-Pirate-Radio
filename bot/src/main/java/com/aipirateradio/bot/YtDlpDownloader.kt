@@ -9,10 +9,44 @@ class YtDlpDownloader(
     private val executable: String,
     private val outputDirectory: Path
 ) {
+    private var resolvedExecutable: String = executable
+
     fun isAvailable(): Boolean {
-        return runCatching {
-            ProcessBuilder(executable, "--version").start().waitFor(5, TimeUnit.SECONDS)
-        }.getOrDefault(false)
+        val isWindows = System.getProperty("os.name").lowercase().contains("win")
+        val candidates = if (isWindows && !executable.endsWith(".exe", ignoreCase = true) && !executable.contains("\\") && !executable.contains("/")) {
+            listOf("$executable.exe", executable)
+        } else {
+            listOf(executable)
+        }
+        for (candidate in candidates) {
+            val success = runCatching {
+                val process = ProcessBuilder(candidate, "--version").start()
+                val exited = process.waitFor(5, TimeUnit.SECONDS)
+                if (!exited) {
+                    System.err.println("yt-dlp check timed out for '$candidate'")
+                    process.destroyForcibly()
+                    false
+                } else {
+                    val exitCode = process.exitValue()
+                    if (exitCode != 0) {
+                        val errorOutput = process.errorStream.bufferedReader().readText()
+                        System.err.println("yt-dlp check failed for '$candidate' with exit code $exitCode. Error: $errorOutput")
+                        false
+                    } else {
+                        true
+                    }
+                }
+            }.onFailure {
+                System.err.println("yt-dlp check failed for '$candidate' with exception: ${it.message}")
+                it.printStackTrace()
+            }.getOrDefault(false)
+
+            if (success) {
+                resolvedExecutable = candidate
+                return true
+            }
+        }
+        return false
     }
 
     fun download(song: Song): DownloadResult {
@@ -20,13 +54,16 @@ class YtDlpDownloader(
         val outputTemplate = outputDirectory.resolve("${safeFileName(song.artist)} - ${safeFileName(song.title)}.%(ext)s").toString()
         val query = "ytsearch1:${song.artist} ${song.title} audio"
         val process = ProcessBuilder(
-            executable,
+            resolvedExecutable,
             "--no-playlist",
             "--extract-audio",
             "--audio-format",
             "mp3",
             "--audio-quality",
             "0",
+            "--embed-thumbnail",
+            "--convert-thumbnails",
+            "jpg",
             "--output",
             outputTemplate,
             query

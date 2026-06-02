@@ -144,6 +144,10 @@ class AndroidLocalAudioPlayer(
         player?.pause()
     }
 
+    fun stop() {
+        stopCurrent()
+    }
+
     override suspend fun awaitTrackEnd(song: Song) {
         val activePlayer = player ?: return delay(song.duration.toMillis())
         suspendCancellableCoroutine { continuation ->

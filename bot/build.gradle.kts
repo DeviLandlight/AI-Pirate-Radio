@@ -34,3 +34,5 @@ tasks.withType<KotlinCompile>().configureEach {
         freeCompilerArgs += "-Xskip-metadata-version-check"
     }
 }
+
+
