@@ -10,7 +10,7 @@ object ArtistGroups {
             "foo fighters", "dave grohl" -> "foo_fighters_family"
             "the beatles", "john lennon", "paul mccartney", "george harrison", "ringo starr" -> "beatles_family"
             "electric light orchestra", "elo", "jeff lynne", "jeff lynnes elo" -> "elo_family"
-            "ayreon", "star one", "arjen anthony lucassen", "the gentle storm", "guilt machine", "ambertian dawn" -> "arjen_lucassen_family"
+            "ayreon", "star one", "arjen anthony lucassen", "the gentle storm", "guilt machine", "stream of passion", "amoon" -> "arjen_lucassen_family"
             "avantasia", "edguy", "tobias sammet" -> "tobias_sammet_family"
             else -> normalized
         }
