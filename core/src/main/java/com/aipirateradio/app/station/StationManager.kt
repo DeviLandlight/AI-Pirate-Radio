@@ -44,7 +44,7 @@ class StationManager(
 
     fun fallbackPick(candidates: List<Candidate>): Song? = candidates.maxByOrNull { it.score }?.song
 
-    private fun rejectionReason(song: Song, history: List<PlayRecord>, now: Instant): String? {
+    fun rejectionReason(song: Song, history: List<PlayRecord>, now: Instant = Instant.now()): String? {
         if (!song.enabled) return "Song is disabled"
         TrackQualityPolicy.rejectionReason(song)?.let { return it }
         SeasonalMusicPolicy.rejectionReason(song, now)?.let { return it }

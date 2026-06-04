@@ -555,12 +555,27 @@ class PirateRadioDiscordBot(
         if (pool.size < targetSongCount) return null
         val candidateCount = (targetSongCount * 14).coerceIn(targetSongCount, 168)
         val seedKeys = seedArtists.map { it.cleanRequestKey() }.toSet()
-        val candidates = pool
+        val stationManager = StationManager(StationRules())
+        val now = Instant.now()
+
+        val seedCandidates = if (seedKeys.isNotEmpty()) {
+            pool.filter { it.artist.cleanRequestKey() in seedKeys && stationManager.rejectionReason(it, history, now) == null }
+                .groupBy { it.artist.cleanRequestKey() }
+                .flatMap { (_, songs) -> songs.shuffled().take(3) }
+        } else {
+            emptyList()
+        }
+        val seedIds = seedCandidates.map { it.id }.toSet()
+
+        val candidates = (seedCandidates + pool
             .asSequence()
+            .filter { it.id !in seedIds }
             .filter { TrackQualityPolicy.isPlayableCatalogTrack(it) }
             .filter { SeasonalMusicPolicy.rejectionReason(it) == null }
+            .filter { stationManager.rejectionReason(it, history, now) == null }
             .distinctBy { "${it.artist.cleanRequestKey()}|${it.title.cleanRequestKey()}" }
-            .take(candidateCount)
+            .take(candidateCount - seedCandidates.size)
+            .toList())
             .mapIndexed { index, song ->
                 val seededArtistBonus = if (song.artist.cleanRequestKey() in seedKeys) 30 else 0
                 val deepCutBonus = if (song.moodTags.any { it.equals("deep_cut", ignoreCase = true) }) 8 else 0
@@ -609,7 +624,7 @@ class PirateRadioDiscordBot(
         vibeBrief: String
     ): List<BatchPickedSong> {
         val artistCap = if (targetSongCount >= 10) 2 else 1
-        val familyCap = if (targetSongCount >= 10) 3 else 2
+        val familyCap = if (targetSongCount >= 10) 2 else 2
         val usedSongKeys = mutableSetOf<String>()
         val artistCounts = mutableMapOf<String, Int>()
         val familyCounts = mutableMapOf<String, Int>()
@@ -650,6 +665,25 @@ class PirateRadioDiscordBot(
                 .filter { it.song.songRequestKey() !in usedSongKeys }
                 .map { BatchPickedSong(it.song, "Local fill-in after repeat cleanup.") }
             addBalancedFillIns(kept, localFillIns, artistCounts, familyCounts, usedSongKeys, artistCap, familyCap)
+        }
+
+        if (kept.size < targetSongCount) {
+            val remainingCandidates = candidates
+                .filter { it.song.songRequestKey() !in usedSongKeys }
+                .sortedByDescending { it.score }
+
+            remainingCandidates.forEach { candidate ->
+                if (kept.size >= targetSongCount) return@forEach
+                val artistKey = candidate.song.artist.cleanRequestKey()
+                val familyKey = ArtistGroups.familyKey(candidate.song.artist)
+                if (artistCounts.getOrDefault(artistKey, 0) < artistCap &&
+                    familyCounts.getOrDefault(familyKey, 0) < familyCap) {
+                    kept += BatchPickedSong(candidate.song, "Fallback variety fill-in.")
+                    usedSongKeys += candidate.song.songRequestKey()
+                    artistCounts[artistKey] = artistCounts.getOrDefault(artistKey, 0) + 1
+                    familyCounts[familyKey] = familyCounts.getOrDefault(familyKey, 0) + 1
+                }
+            }
         }
 
         if (kept.size < targetSongCount) {
