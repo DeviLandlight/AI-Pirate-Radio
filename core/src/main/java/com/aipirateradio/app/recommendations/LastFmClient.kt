@@ -23,7 +23,7 @@ class LastFmClient(
         }.distinctBy { it.lowercase() }
 
         val songs = artists.flatMap { artist ->
-            topTracks(apiKey, artist).take(request.maxTracksPerArtist)
+            topTracks(apiKey, artist).stationShelf(request)
         }.distinctBy { "${it.artist.lowercase()}|${it.title.lowercase()}" }
 
         RecommendationPool(songs, listOf("Last.fm: ${songs.size} songs from ${artists.size} artists"))
@@ -66,13 +66,14 @@ class LastFmClient(
     }
 
     private fun topTracks(apiKey: String, artist: String): List<Song> {
-        val json = getJson("https://ws.audioscrobbler.com/2.0/?method=artist.gettoptracks&artist=${artist.url()}&api_key=$apiKey&format=json&limit=12")
+        val json = getJson("https://ws.audioscrobbler.com/2.0/?method=artist.gettoptracks&artist=${artist.url()}&api_key=$apiKey&format=json&limit=30")
         val array = json?.optJSONObject("toptracks")?.optJSONArray("track") ?: return emptyList()
         return buildList {
             for (i in 0 until array.length()) {
                 val track = array.optJSONObject(i) ?: continue
                 val title = track.optString("name").takeIf { it.isNotBlank() } ?: continue
                 val trackArtist = track.optJSONObject("artist")?.optString("name").takeIf { !it.isNullOrBlank() } ?: artist
+                val popularityTier = if (i >= DEEP_CUT_START_INDEX) "deep_cut" else "familiar"
                 add(
                     Song(
                         id = "lastfm:$trackArtist:$title".stableId(),
@@ -81,11 +82,19 @@ class LastFmClient(
                         artist = trackArtist,
                         duration = Duration.ofMinutes(3),
                         genreTags = listOf("lastfm"),
-                        moodTags = emptyList()
+                        moodTags = listOf(popularityTier)
                     )
                 )
             }
         }
+    }
+
+    private fun List<Song>.stationShelf(request: RecommendationRequest): List<Song> {
+        val familiar = take(FAMILIAR_TRACK_LIMIT).take(request.maxTracksPerArtist)
+        if (!request.includeObscureTracks) return familiar
+        val deepCutCount = (request.maxTracksPerArtist / 2).coerceAtLeast(1)
+        val deepCuts = drop(DEEP_CUT_START_INDEX).take(DEEP_CUT_TRACK_LIMIT).take(deepCutCount)
+        return familiar + deepCuts
     }
 
     private fun trackInfo(apiKey: String, artist: String, track: String): JSONObject? =
@@ -104,6 +113,10 @@ class LastFmClient(
         }.getOrNull()
     }
 }
+
+private const val FAMILIAR_TRACK_LIMIT = 8
+private const val DEEP_CUT_START_INDEX = 8
+private const val DEEP_CUT_TRACK_LIMIT = 22
 
 private fun String.url(): String = java.net.URLEncoder.encode(this, Charsets.UTF_8.name())
 private fun String?.cleanLastFmSummary(): String? {

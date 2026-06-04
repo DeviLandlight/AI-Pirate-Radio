@@ -25,7 +25,7 @@ class OpenAiSpeechSynthesizer(
             .put("model", model)
             .put("voice", voice)
             .put("input", text.normalizeForSpeech())
-            .put("instructions", "Sound like a warm, understated late-night radio host. Natural, conversational, not theatrical.")
+            .put("instructions", RADIO_DJ_TTS_INSTRUCTIONS)
             .toString()
 
         val request = HttpRequest.newBuilder(URI("https://api.openai.com/v1/audio/speech"))
@@ -41,6 +41,17 @@ class OpenAiSpeechSynthesizer(
         if (response.statusCode() !in 200..299) return null
         Files.write(output, response.body())
         return output
+    }
+
+    private companion object {
+        val RADIO_DJ_TTS_INSTRUCTIONS = """
+            Perform as a charismatic late-night radio DJ, not an audiobook narrator.
+            Sound warm, amused, present, and conversational, with a slight smile in the voice.
+            Add natural pauses at sentence breaks. Give important artist and song names a little emphasis.
+            Let the emotion match the copy: playful lines can be a little mischievous, sincere lines can soften, high-energy lines can lift.
+            Keep it intimate and radio-real. Do not shout, overact, sing, do character voices, or sound like an advertisement.
+            Avoid a flat monotone. Avoid exaggerated announcer voice.
+        """.trimIndent()
     }
 }
 

@@ -46,6 +46,8 @@ class StationManager(
 
     private fun rejectionReason(song: Song, history: List<PlayRecord>, now: Instant): String? {
         if (!song.enabled) return "Song is disabled"
+        TrackQualityPolicy.rejectionReason(song)?.let { return it }
+        SeasonalMusicPolicy.rejectionReason(song, now)?.let { return it }
 
         val lastSongPlay = history.filter { it.songId == song.id || it.songKey() == song.songKey() }.maxByOrNull { it.startedAt }
         if (rules.enforceSongRepeatWindow && lastSongPlay != null && lastSongPlay.startedAt > now.minus(rules.songRepeatWindow)) return "Song played inside repeat window"

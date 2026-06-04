@@ -23,13 +23,17 @@ class ShowPreparer(
         startingHistory: List<PlayRecord>,
         startingSegueState: SegueState,
         targetSongCount: Int,
+        journeyBeats: List<JourneyBeat> = emptyList(),
         now: Instant = Instant.now()
     ): PreparedShow {
         val catalog = musicRecommender.buildPool(recommendationRequest).songs
         val history = startingHistory.toMutableList()
         val tracks = mutableListOf<PreparedShowTrack>()
-        val showTheme = recommendationRequest.favoriteArtists.take(3).joinToString(", ") { it.name }
-            .ifBlank { "songs that can carry a drive without wearing out their welcome" }
+        val showTheme = if (recommendationRequest.favoriteArtists.isNotEmpty()) {
+            "the requested station vibe"
+        } else {
+            "a focused set of hand-picked songs"
+        }
 
         var attempt = 0
         while (tracks.size < targetSongCount && attempt < targetSongCount * 4) {
@@ -39,26 +43,23 @@ class ShowPreparer(
             attempt += 1
             val showCandidates = selection.candidates
                 .filter { candidate -> isAllowedByShowMix(candidate.song, tracks, attempt, targetSongCount) }
+                .preferPopularityTierForSlot(index, targetSongCount)
             if (showCandidates.isEmpty()) continue
 
-            val pick = songPicker.pickSong(SongPickRequest(history.takeLast(5), showCandidates))
+            val pick = songPicker.pickSong(
+                SongPickRequest(
+                    stationHistory = startingHistory.takeLast(5),
+                    candidates = showCandidates,
+                    currentShowSongs = tracks.map { it.song },
+                    journeyBeat = journeyBeats.getOrNull(index)
+                )
+            )
             val selectedSong = pick?.song?.takeIf { picked -> showCandidates.any { it.song.id == picked.id } }
                 ?: stationManager.fallbackPick(showCandidates)
                 ?: continue
 
             val playableSong = resolvePlayableSong(selectedSong, showCandidates, tracks) ?: continue
-            val previousSong = tracks.lastOrNull()?.song
-            val segueType = segueTypeFor(index, playableSong, tracks, history)
-            val isNewArtist = tracks.none { it.song.artist.equals(playableSong.artist, ignoreCase = true) } &&
-                history.none { it.artist.equals(playableSong.artist, ignoreCase = true) }
-            val segue = if (segueType == SegueType.SILENCE) {
-                null
-            } else {
-                val facts = runCatching { trackFactFinder.factsFor(playableSong) }.getOrDefault(emptyList())
-                segueWriter.writeSegue(SegueRequest(playableSong, segueType, previousSong, showTheme, isNewArtist, facts))
-            }
-
-            tracks += PreparedShowTrack(playableSong, segue?.text, pick?.reason)
+            tracks += PreparedShowTrack(playableSong, null, pick?.reason)
             history += PlayRecord(
                 songId = playableSong.id,
                 title = playableSong.title,
@@ -66,11 +67,44 @@ class ShowPreparer(
                 album = playableSong.album,
                 genreTags = playableSong.genreTags,
                 startedAt = now.plusSeconds(index.toLong() * 240L),
-                hadSegue = segue != null
+                hadSegue = false
             )
         }
 
-        return PreparedShow(tracks)
+        return PreparedShow(writeSegues(tracks, startingHistory, showTheme, journeyBeats))
+    }
+
+    private suspend fun writeSegues(
+        tracks: List<PreparedShowTrack>,
+        startingHistory: List<PlayRecord>,
+        showTheme: String,
+        journeyBeats: List<JourneyBeat>
+    ): List<PreparedShowTrack> {
+        if (tracks.isEmpty()) return tracks
+        val showSongs = tracks.map { it.song }
+        return tracks.mapIndexed { index, track ->
+            val previousTracks = tracks.take(index)
+            val segueType = segueTypeFor(index, track.song, previousTracks, startingHistory)
+            if (segueType == SegueType.SILENCE) return@mapIndexed track
+
+            val isNewArtist = previousTracks.none { it.song.artist.equals(track.song.artist, ignoreCase = true) } &&
+                startingHistory.none { it.artist.equals(track.song.artist, ignoreCase = true) }
+            val facts = runCatching { trackFactFinder.factsFor(track.song) }.getOrDefault(emptyList())
+            val segue = segueWriter.writeSegue(
+                SegueRequest(
+                    song = track.song,
+                    type = segueType,
+                    previousSong = previousTracks.lastOrNull()?.song,
+                    showTheme = showTheme,
+                    isNewArtist = isNewArtist,
+                    verifiedFacts = facts,
+                    showSongs = showSongs,
+                    journeyBeat = journeyBeats.getOrNull(index),
+                    journeyBeats = journeyBeats
+                )
+            )
+            track.copy(segueText = segue?.text)
+        }
     }
 
     private suspend fun resolvePlayableSong(
@@ -80,9 +114,8 @@ class ShowPreparer(
     ): Song? {
         val songsToTry = listOf(preferredSong) + candidates.map { it.song }.filterNot { it.id == preferredSong.id }
         for (song in songsToTry.take(MAX_RESOLVE_ATTEMPTS)) {
-            if (tracks.any { it.song.artist.equals(song.artist, ignoreCase = true) }) continue
             val resolved = runCatching { trackResolver.resolve(song) }.getOrNull()
-            if (resolved != null && tracks.none { it.song.artist.equals(resolved.artist, ignoreCase = true) }) return resolved
+            if (resolved != null) return resolved
         }
         return null
     }
@@ -91,6 +124,25 @@ class ShowPreparer(
         const val MAX_RESOLVE_ATTEMPTS = 3
     }
 }
+
+private fun List<Candidate>.preferPopularityTierForSlot(index: Int, targetSongCount: Int): List<Candidate> {
+    if (isEmpty()) return this
+    val preferred = if (isDeepCutSlot(index, targetSongCount)) {
+        filter { it.song.isDeepCut() }
+    } else {
+        filterNot { it.song.isDeepCut() }
+    }
+    return preferred.takeIf { it.isNotEmpty() } ?: this
+}
+
+private fun isDeepCutSlot(index: Int, targetSongCount: Int): Boolean {
+    val songNumber = index + 1
+    val preferredSlots = if (targetSongCount >= 11) setOf(4, 8, 11) else setOf(4, 8)
+    return songNumber in preferredSlots
+}
+
+private fun Song.isDeepCut(): Boolean =
+    moodTags.any { it.equals("deep_cut", ignoreCase = true) }
 
 private fun managerForAttempt(currentTrackCount: Int, targetSongCount: Int, attempt: Int): StationManager? {
     val remaining = targetSongCount - currentTrackCount
@@ -151,12 +203,13 @@ private fun isAllowedByShowMix(
     attempt: Int,
     targetSongCount: Int
 ): Boolean {
-    if (tracks.any { it.song.artist.equals(song.artist, ignoreCase = true) }) return false
-
     val familyCount = tracks.count { ArtistGroups.familyKey(it.song.artist) == ArtistGroups.familyKey(song.artist) }
     val laneCount = tracks.count { ArtistGroups.laneKey(it.song.artist) == ArtistGroups.laneKey(song.artist) }
+    val artistCount = tracks.count { it.song.artist.equals(song.artist, ignoreCase = true) }
     val lastResort = attempt >= targetSongCount * 3
 
+    if (!lastResort && artistCount >= 1) return false
+    if (lastResort && artistCount >= 3) return false
     if (!lastResort && familyCount >= 1) return false
     if (lastResort && familyCount >= 2) return false
     if (!lastResort && laneCount >= 3) return false
@@ -166,9 +219,9 @@ private fun isAllowedByShowMix(
 
 private fun segueTypeFor(index: Int, song: Song, tracks: List<PreparedShowTrack>, history: List<PlayRecord>): SegueType {
     if (index == 0) return SegueType.THEME
+    if (index % 2 != 0) return SegueType.SILENCE
     val isNewArtist = tracks.none { it.song.artist.equals(song.artist, ignoreCase = true) } &&
         history.none { it.artist.equals(song.artist, ignoreCase = true) }
-    if (index % 4 == 2) return SegueType.SILENCE
     if (index % 7 == 0) return SegueType.FACT
     if (index % 6 == 0) return SegueType.HISTORY
     if (isNewArtist && index % 5 == 0) return SegueType.DISCOVERY

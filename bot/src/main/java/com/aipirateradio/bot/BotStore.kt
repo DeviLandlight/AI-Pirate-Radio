@@ -31,7 +31,8 @@ class BotStore(
                 queueVibes = json.optJSONArray("queueVibes").toStringList(),
                 requestCooldowns = json.optJSONObject("requestCooldowns").toInstantMap(),
                 callIns = json.optJSONArray("callIns").toCallIns(),
-                askCooldowns = json.optJSONObject("askCooldowns").toInstantMap()
+                askCooldowns = json.optJSONObject("askCooldowns").toInstantMap(),
+                journeyLockedUntilIndex = json.optInt("journeyLockedUntilIndex", 0).coerceAtLeast(0)
             )
         }.getOrDefault(PersistedRadioSession())
     }
@@ -47,6 +48,7 @@ class BotStore(
             .put("requestCooldowns", session.requestCooldowns.toJson())
             .put("callIns", JSONArray().also { array -> session.callIns.forEach { array.put(it.toJson()) } })
             .put("askCooldowns", session.askCooldowns.toJson())
+            .put("journeyLockedUntilIndex", session.journeyLockedUntilIndex)
         sessionFile(key).writeText(json.toString(2))
     }
 
@@ -64,7 +66,8 @@ data class PersistedRadioSession(
     val queueVibes: List<String> = emptyList(),
     val requestCooldowns: Map<Long, Instant> = emptyMap(),
     val callIns: List<CallInQuestion> = emptyList(),
-    val askCooldowns: Map<Long, Instant> = emptyMap()
+    val askCooldowns: Map<Long, Instant> = emptyMap(),
+    val journeyLockedUntilIndex: Int = 0
 )
 
 fun defaultBotDataPath(): Path = Path.of("bot-data")

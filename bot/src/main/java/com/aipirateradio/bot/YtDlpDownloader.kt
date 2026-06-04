@@ -21,7 +21,7 @@ class YtDlpDownloader(
         for (candidate in candidates) {
             val success = runCatching {
                 val process = ProcessBuilder(candidate, "--version").start()
-                val exited = process.waitFor(5, TimeUnit.SECONDS)
+                val exited = process.waitFor(30, TimeUnit.SECONDS)
                 if (!exited) {
                     System.err.println("yt-dlp check timed out for '$candidate'")
                     process.destroyForcibly()

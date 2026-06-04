@@ -1,10 +1,16 @@
 package com.aipirateradio.app.openai
 
 import com.aipirateradio.app.station.Candidate
+import com.aipirateradio.app.station.JourneyBeat
 import com.aipirateradio.app.station.PlayRecord
 import com.aipirateradio.app.station.Song
 
-data class SongPickRequest(val previousSongs: List<PlayRecord>, val candidates: List<Candidate>)
+data class SongPickRequest(
+    val stationHistory: List<PlayRecord>,
+    val candidates: List<Candidate>,
+    val currentShowSongs: List<Song> = emptyList(),
+    val journeyBeat: JourneyBeat? = null
+)
 data class SongPickResult(val song: Song, val reason: String)
 data class SegueResult(val fact: String, val text: String, val audioBytes: ByteArray? = null)
 
@@ -15,6 +21,7 @@ enum class SegueType(val displayName: String, val targetSeconds: String) {
     THEME("Theme", "15 to 20 seconds"),
     DISCOVERY("Discovery", "about 10 seconds"),
     PERSONAL_OBSERVATION("Personal observation", "about 8 seconds"),
+    CLOSING("Closing", "8 to 12 seconds"),
     SILENCE("Silence", "0 seconds")
 }
 
@@ -24,7 +31,10 @@ data class SegueRequest(
     val previousSong: Song? = null,
     val showTheme: String? = null,
     val isNewArtist: Boolean = false,
-    val verifiedFacts: List<String> = emptyList()
+    val verifiedFacts: List<String> = emptyList(),
+    val showSongs: List<Song> = emptyList(),
+    val journeyBeat: JourneyBeat? = null,
+    val journeyBeats: List<JourneyBeat> = emptyList()
 )
 
 interface SongPicker {
@@ -92,9 +102,10 @@ class LocalSegueWriter : SegueWriter {
                 ?: "A little deeper into the set now: ${song.artist}, with ${song.title}$album$year."
             SegueType.HISTORY -> fact.takeIf { it.isNotBlank() }?.let { "$it Now ${song.artist}, ${song.title}." }
                 ?: "This next one sits a little deeper in the catalog. Here's ${song.artist} with ${song.title}."
-            SegueType.THEME -> "Tonight's show is circling ${request.showTheme ?: "a focused set of hand-picked songs"}. First up, ${song.artist} with ${song.title}."
+            SegueType.THEME -> "Tonight's show is leaning into a focused set of hand-picked songs. First up, ${song.artist} with ${song.title}."
             SegueType.DISCOVERY -> "If ${previous?.artist ?: "the last artist"} caught your ear, keep this next one close: ${song.artist}, ${song.title}."
             SegueType.PERSONAL_OBSERVATION -> "This one puts the texture up front: ${song.artist}, ${song.title}."
+            SegueType.CLOSING -> "That closes out this set. Last one on the board was ${song.artist} with ${song.title}. Thanks for listening."
             SegueType.SILENCE -> ""
         }
         return SegueResult(fact, text)

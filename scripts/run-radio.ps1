@@ -1,6 +1,7 @@
 param(
     [string]$CloudflaredPath = "C:\Tools\cloudflared\cloudflared.exe",
-    [string]$TunnelName = "radio-skittles-api"
+    [string]$TunnelName = "radio-skittles-api",
+    [string]$YtDlpPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,6 +18,26 @@ if (-not (Test-Path -LiteralPath $gradle)) {
 
 if (-not (Test-Path -LiteralPath $CloudflaredPath)) {
     throw "Could not find cloudflared at $CloudflaredPath"
+}
+
+if ([string]::IsNullOrWhiteSpace($YtDlpPath)) {
+    $configuredYtDlp = [Environment]::GetEnvironmentVariable("YTDLP_PATH")
+    if (-not [string]::IsNullOrWhiteSpace($configuredYtDlp)) {
+        $YtDlpPath = $configuredYtDlp
+    } else {
+        $foundYtDlp = Get-Command "yt-dlp" -ErrorAction SilentlyContinue
+        if ($foundYtDlp) {
+            $YtDlpPath = $foundYtDlp.Source
+        }
+    }
+}
+
+if (-not [string]::IsNullOrWhiteSpace($YtDlpPath)) {
+    if (-not (Test-Path -LiteralPath $YtDlpPath)) {
+        throw "Could not find yt-dlp at $YtDlpPath"
+    }
+    $env:YTDLP_PATH = $YtDlpPath
+    Write-Host "Using yt-dlp: $YtDlpPath"
 }
 
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null

@@ -30,7 +30,7 @@ class StationEngine(
         val catalog = musicRecommender.buildPool(recommendationRequest).songs
         val selection = stationManager.selectCandidates(catalog, history, now)
         if (selection.candidates.isEmpty()) return null
-        val pick = songPicker.pickSong(SongPickRequest(history.takeLast(5), selection.candidates))
+        val pick = songPicker.pickSong(SongPickRequest(stationHistory = history.takeLast(5), candidates = selection.candidates))
         val selectedSong = pick?.song?.takeIf { picked -> selection.candidates.any { it.song.id == picked.id } }
             ?: stationManager.fallbackPick(selection.candidates)
             ?: return null

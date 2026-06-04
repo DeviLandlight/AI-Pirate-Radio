@@ -5,20 +5,28 @@ import com.aipirateradio.app.openai.FallbackSongPicker
 import com.aipirateradio.app.openai.LocalSegueWriter
 import com.aipirateradio.app.openai.LocalSongPicker
 import com.aipirateradio.app.openai.OpenAiRadioClient
+import com.aipirateradio.app.openai.SegueRequest
+import com.aipirateradio.app.openai.SegueType
 import com.aipirateradio.app.recommendations.FavoriteArtistSeed
 import com.aipirateradio.app.recommendations.LastFmClient
+import com.aipirateradio.app.recommendations.MusicRecommender
 import com.aipirateradio.app.recommendations.RecommendationRequest
 import com.aipirateradio.app.recommendations.StaticSeedRecommender
+import com.aipirateradio.app.station.ArtistGroups
+import com.aipirateradio.app.station.Candidate
+import com.aipirateradio.app.station.JourneyBeat
 import com.aipirateradio.app.station.PlayRecord
 import com.aipirateradio.app.station.PreparedShow
 import com.aipirateradio.app.station.PreparedShowTrack
 import com.aipirateradio.app.station.RadioVibes
 import com.aipirateradio.app.station.SampleCatalog
 import com.aipirateradio.app.station.SegueState
+import com.aipirateradio.app.station.SeasonalMusicPolicy
 import com.aipirateradio.app.station.ShowPreparer
 import com.aipirateradio.app.station.Song
 import com.aipirateradio.app.station.StationManager
 import com.aipirateradio.app.station.StationRules
+import com.aipirateradio.app.station.TrackQualityPolicy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -84,6 +92,12 @@ private fun radioCommands(): List<CommandData> {
         Commands.slash("prepare-next", "Append another radio block after the current queue.")
             .addOption(OptionType.STRING, "vibe", "Use `/vibes` for built-ins, or enter comma-separated artists.", false)
             .addOption(OptionType.INTEGER, "songs", "Number of songs to append.", false),
+        Commands.slash("prepare-journey", "Prepare a chapter-based radio journey.")
+            .addOption(OptionType.STRING, "vibe", "Use `/vibes` for built-ins, or enter comma-separated artists.", false)
+            .addOption(OptionType.INTEGER, "songs", "Number of journey chapters/songs.", false),
+        Commands.slash("prepare-album", "Prepare a full album from MusicBrainz track order.")
+            .addOption(OptionType.STRING, "artist", "Album artist, like Gloryhammer.", true)
+            .addOption(OptionType.STRING, "album", "Optional album title. If omitted, MusicBrainz picks a likely album.", false),
         Commands.slash("prepare-local", "Prepare a radio show using only files already in your music folder.")
             .addOption(OptionType.INTEGER, "songs", "Number of songs to prepare.", false),
         Commands.slash("vibes", "List built-in radio vibes you can use with `/prepare`."),
@@ -162,6 +176,8 @@ class PirateRadioDiscordBot(
             "join" -> join(event)
             "prepare" -> prepare(event)
             "prepare-next" -> prepareNext(event)
+            "prepare-journey" -> prepareJourney(event)
+            "prepare-album" -> prepareAlbum(event)
             "prepare-local" -> prepareLocal(event)
             "vibes" -> vibes(event)
             "play" -> play(event)
@@ -246,7 +262,14 @@ class PirateRadioDiscordBot(
                 trackFactFinder = lastFmClient ?: com.aipirateradio.app.station.EmptyTrackFactFinder
             )
             val show = runCatching {
-                preparer.prepareShow(
+                prepareBatchShow(
+                    vibeLabel = vibeLabel,
+                    seedArtists = artists,
+                    musicRecommender = recommender,
+                    library = library,
+                    history = session.history,
+                    targetSongCount = count
+                ) ?: preparer.prepareShow(
                     recommendationRequest = RecommendationRequest(
                         favoriteArtists = artists.map { FavoriteArtistSeed(it) },
                         includeObscureTracks = true,
@@ -262,10 +285,15 @@ class PirateRadioDiscordBot(
                 event.hook.editOriginal("Show setup failed: ${it.readableMessage()}.").queue()
                 return@launch
             }
+            if (show.tracks.size < count) {
+                event.hook.editOriginal("I only found ${show.tracks.size}/$count songs for `$vibeLabel`. Try broader seeds, clear history, or use `/prepare-local` for local testing.").queue()
+                return@launch
+            }
             session.preparedShow = show
             session.vibeLabel = vibeLabel
             session.queueVibes = MutableList(show.tracks.size) { vibeLabel }
             session.nextTrackIndex = 0
+            session.journeyLockedUntilIndex = 0
             appendPreparedShowToHistory(session, show)
             store.saveSession(RadioSessionKey(guild.idLong, voiceChannel.idLong), session)
             visualizerState.prepared(show, vibeLabel)
@@ -329,7 +357,14 @@ class PirateRadioDiscordBot(
                 )
             }
             val nextBlock = runCatching {
-                preparer.prepareShow(
+                prepareBatchShow(
+                    vibeLabel = vibeLabel,
+                    seedArtists = artistsFor(vibeText),
+                    musicRecommender = recommender,
+                    library = library,
+                    history = historyForAppend,
+                    targetSongCount = count
+                ) ?: preparer.prepareShow(
                     recommendationRequest = RecommendationRequest(
                         favoriteArtists = artistsFor(vibeText).map { FavoriteArtistSeed(it) },
                         includeObscureTracks = true,
@@ -349,6 +384,10 @@ class PirateRadioDiscordBot(
                 event.hook.editOriginal("No songs were found for the next block.").queue()
                 return@launch
             }
+            if (nextBlock.tracks.size < count) {
+                event.hook.editOriginal("I only found ${nextBlock.tracks.size}/$count songs for the next `$vibeLabel` block. Try broader seeds or clear history.").queue()
+                return@launch
+            }
             val appendedShow = existingShow.copy(tracks = existingShow.tracks + nextBlock.tracks)
             session.ensureQueueVibes(existingShow.tracks.size)
             session.queueVibes.addAll(List(nextBlock.tracks.size) { vibeLabel })
@@ -360,6 +399,397 @@ class PirateRadioDiscordBot(
                 "Appended ${nextBlock.tracks.size} songs for `$vibeLabel`. Queue now has ${appendedShow.tracks.size - session.nextTrackIndex} upcoming tracks." +
                     appendedShow.availabilityNote(localSongs.size)
             ).queue()
+        }
+    }
+
+    private fun prepareJourney(event: SlashCommandInteractionEvent) {
+        val guild = event.guild ?: return event.reply("Use this in a server.").setEphemeral(true).queue()
+        val voiceChannel = event.member?.voiceState?.channel
+            ?: return event.reply("Join a voice channel first, then run `/prepare-journey`.").setEphemeral(true).queue()
+        event.deferReply().queue()
+        scope.launch {
+            val count = event.getOption("songs")?.asLong?.toInt()?.coerceIn(6, 12) ?: 12
+            val vibeText = event.getOption("vibe")?.asString.orEmpty()
+            val vibeLabel = vibeLabelFor(vibeText)
+            visualizerState.preparing("$vibeLabel Journey")
+            val session = sessionFor(guild.idLong, voiceChannel.idLong)
+            val library = DesktopMusicLibrary(config.musicLibraryPath)
+            val localSongs = library.songs()
+            val lastFmClient = config.lastFmApiKey.takeIf { it.isNotBlank() }?.let {
+                LastFmClient(apiKeyProvider = { it })
+            }
+            val recommender = if (lastFmClient != null) {
+                lastFmClient
+            } else if (localSongs.size >= 2) {
+                DesktopMusicRecommender(library)
+            } else {
+                StaticSeedRecommender(SampleCatalog.songs)
+            }
+            val localPicker = LocalSongPicker()
+            val localSegue = LocalSegueWriter()
+            val openAiClient = config.openAiApiKey.takeIf { it.isNotBlank() }?.let {
+                OpenAiRadioClient(
+                    apiKeyProvider = { it },
+                    textModel = config.openAiTextModel,
+                    generateSpeech = false
+                )
+            }
+            val artists = artistsFor(vibeText)
+            val journeyBeats = JourneyPlanner(config.openAiApiKey, config.openAiTextModel)
+                .createJourney(vibeLabel, artists, count)
+            val preparer = ShowPreparer(
+                stationManager = StationManager(StationRules(candidateCount = 12)),
+                musicRecommender = recommender,
+                songPicker = openAiClient?.let { FallbackSongPicker(it, localPicker) } ?: localPicker,
+                segueWriter = openAiClient?.let { FallbackSegueWriter(it, localSegue) } ?: localSegue,
+                trackResolver = DesktopTrackResolver(library, allowUnmatchedPlannedSongs = true),
+                trackFactFinder = lastFmClient ?: com.aipirateradio.app.station.EmptyTrackFactFinder
+            )
+            val show = runCatching {
+                preparer.prepareShow(
+                    recommendationRequest = RecommendationRequest(
+                        favoriteArtists = artists.map { FavoriteArtistSeed(it) },
+                        includeObscureTracks = true,
+                        includeBSides = false,
+                        maxArtistsPerSeed = 3,
+                        maxTracksPerArtist = 2
+                    ),
+                    startingHistory = session.history,
+                    startingSegueState = SegueState(),
+                    targetSongCount = count,
+                    journeyBeats = journeyBeats
+                )
+            }.getOrElse {
+                event.hook.editOriginal("Journey setup failed: ${it.readableMessage()}.").queue()
+                return@launch
+            }.withJourneyReasons(journeyBeats)
+            if (show.tracks.isEmpty()) {
+                event.hook.editOriginal("No songs were found for that journey.").queue()
+                return@launch
+            }
+            session.preparedShow = show
+            session.vibeLabel = "$vibeLabel Journey"
+            session.queueVibes = MutableList(show.tracks.size) { "$vibeLabel Journey" }
+            session.nextTrackIndex = 0
+            session.journeyLockedUntilIndex = show.tracks.size
+            appendPreparedShowToHistory(session, show)
+            store.saveSession(RadioSessionKey(guild.idLong, voiceChannel.idLong), session)
+            visualizerState.prepared(show, "$vibeLabel Journey")
+            event.hook.editOriginal(
+                show.summary("Journey prepared") +
+                    "\n\nJourney chapters:\n${journeyBeats.formatJourneyBeats()}" +
+                    show.availabilityNote(localSongs.size)
+            ).queue()
+        }
+    }
+
+    private fun prepareAlbum(event: SlashCommandInteractionEvent) {
+        val guild = event.guild ?: return event.reply("Use this in a server.").setEphemeral(true).queue()
+        val voiceChannel = event.member?.voiceState?.channel
+            ?: return event.reply("Join a voice channel first, then run `/prepare-album`.").setEphemeral(true).queue()
+        val artist = event.getOption("artist")?.asString.orEmpty().trim()
+        val albumTitle = event.getOption("album")?.asString?.trim()?.takeIf { it.isNotBlank() }
+        if (artist.isBlank()) {
+            return event.reply("Give me an artist for album mode.").setEphemeral(true).queue()
+        }
+        event.deferReply().queue()
+        scope.launch {
+            val session = sessionFor(guild.idLong, voiceChannel.idLong)
+            val library = DesktopMusicLibrary(config.musicLibraryPath)
+            val localSongs = library.songs()
+            val vibeLabel = albumTitle?.let { "$artist - $it" } ?: "$artist Album"
+            visualizerState.preparing(vibeLabel)
+            val album = MusicBrainzAlbumClient().findAlbum(artist, albumTitle)
+                ?: run {
+                    val albumHint = albumTitle?.let { " named `$it`" }.orEmpty()
+                    event.hook.editOriginal("I could not find an official MusicBrainz album for `$artist`$albumHint.").queue()
+                    return@launch
+                }
+            val resolver = DesktopTrackResolver(library, allowUnmatchedPlannedSongs = true)
+            val resolvedTracks = album.tracks.map { song -> resolver.resolve(song) ?: song }
+            val show = PreparedShow(
+                tracks = writeAlbumSegues(album, resolvedTracks.mapIndexed { index, song ->
+                    PreparedShowTrack(
+                        song = song,
+                        segueText = null,
+                        pickReason = "Album mode: track ${index + 1} from ${album.artist} - ${album.title}."
+                    )
+                })
+            )
+            session.preparedShow = show
+            session.vibeLabel = "${album.artist} - ${album.title}"
+            session.queueVibes = MutableList(show.tracks.size) { "${album.artist} - ${album.title}" }
+            session.nextTrackIndex = 0
+            session.journeyLockedUntilIndex = show.tracks.size
+            appendPreparedShowToHistory(session, show)
+            store.saveSession(RadioSessionKey(guild.idLong, voiceChannel.idLong), session)
+            visualizerState.prepared(show, session.vibeLabel)
+            event.hook.editOriginal(
+                show.summary("Album prepared: ${album.artist} - ${album.title}") +
+                    "\n\nRequests will be saved until after the album." +
+                    show.availabilityNote(localSongs.size)
+            ).queue()
+        }
+    }
+
+    private suspend fun prepareBatchShow(
+        vibeLabel: String,
+        seedArtists: List<String>,
+        musicRecommender: MusicRecommender,
+        library: DesktopMusicLibrary,
+        history: List<PlayRecord>,
+        targetSongCount: Int
+    ): PreparedShow? {
+        if (config.openAiApiKey.isBlank()) return null
+        val planner = BatchShowPlanner(config.openAiApiKey, config.openAiTextModel)
+        val vibeBrief = planner.createVibeBrief(vibeLabel, seedArtists) ?: return null
+        val pool = musicRecommender.buildPool(
+            RecommendationRequest(
+                favoriteArtists = seedArtists.map { FavoriteArtistSeed(it) },
+                includeObscureTracks = true,
+                includeBSides = false,
+                maxArtistsPerSeed = 10,
+                maxTracksPerArtist = 14
+            )
+        ).songs
+        if (pool.size < targetSongCount) return null
+        val candidateCount = (targetSongCount * 14).coerceIn(targetSongCount, 168)
+        val seedKeys = seedArtists.map { it.cleanRequestKey() }.toSet()
+        val candidates = pool
+            .asSequence()
+            .filter { TrackQualityPolicy.isPlayableCatalogTrack(it) }
+            .filter { SeasonalMusicPolicy.rejectionReason(it) == null }
+            .distinctBy { "${it.artist.cleanRequestKey()}|${it.title.cleanRequestKey()}" }
+            .take(candidateCount)
+            .mapIndexed { index, song ->
+                val seededArtistBonus = if (song.artist.cleanRequestKey() in seedKeys) 30 else 0
+                val deepCutBonus = if (song.moodTags.any { it.equals("deep_cut", ignoreCase = true) }) 8 else 0
+                Candidate(
+                    song = song,
+                    score = 100 + seededArtistBonus + deepCutBonus - (index / 4),
+                    reasons = listOf(
+                        "Vibe pool candidate",
+                        if (seededArtistBonus > 0) "Seed artist" else "Adjacent artist",
+                        if (deepCutBonus > 0) "Deep cut shelf" else "Familiar shelf"
+                    )
+                )
+            }
+            .toList()
+        if (candidates.size < targetSongCount) return null
+        val picks = planner.planPlaylist(
+            vibeLabel = vibeLabel,
+            vibeBrief = vibeBrief,
+            candidates = candidates,
+            history = history,
+            targetSongCount = targetSongCount
+        ) ?: return null
+        val seededPicks = protectSeedArtists(picks, candidates, seedArtists)
+        val balancedPicks = balanceBatchPicks(seededPicks, candidates, targetSongCount, planner, vibeBrief)
+        val resolver = DesktopTrackResolver(library, allowUnmatchedPlannedSongs = true)
+        val tracks = balancedPicks.map { pick ->
+            PreparedShowTrack(
+                song = resolver.resolve(pick.song) ?: pick.song,
+                segueText = null,
+                pickReason = "Batch vibe brief: $vibeBrief Pick: ${pick.reason}"
+            )
+        }
+        val segues = planner.writeSegueBatch(vibeBrief, tracks, spacing = 2).orEmpty()
+        return PreparedShow(
+            tracks = tracks.mapIndexed { index, track ->
+                track.copy(segueText = segues[index])
+            }
+        )
+    }
+
+    private suspend fun balanceBatchPicks(
+        picks: List<BatchPickedSong>,
+        candidates: List<Candidate>,
+        targetSongCount: Int,
+        planner: BatchShowPlanner,
+        vibeBrief: String
+    ): List<BatchPickedSong> {
+        val artistCap = if (targetSongCount >= 10) 2 else 1
+        val familyCap = if (targetSongCount >= 10) 3 else 2
+        val usedSongKeys = mutableSetOf<String>()
+        val artistCounts = mutableMapOf<String, Int>()
+        val familyCounts = mutableMapOf<String, Int>()
+        val kept = mutableListOf<BatchPickedSong>()
+        val removed = mutableListOf<BatchPickedSong>()
+        picks.forEach { pick ->
+            val artistKey = pick.song.artist.cleanRequestKey()
+            val familyKey = ArtistGroups.familyKey(pick.song.artist)
+            val currentCount = artistCounts.getOrDefault(artistKey, 0)
+            val currentFamilyCount = familyCounts.getOrDefault(familyKey, 0)
+            if (currentCount < artistCap && currentFamilyCount < familyCap) {
+                artistCounts[artistKey] = currentCount + 1
+                familyCounts[familyKey] = currentFamilyCount + 1
+                kept += pick
+                usedSongKeys += pick.song.songRequestKey()
+            } else {
+                removed += pick
+            }
+        }
+
+        val replacementCandidates = candidates.filter { candidate ->
+            val artistKey = candidate.song.artist.cleanRequestKey()
+            val familyKey = ArtistGroups.familyKey(candidate.song.artist)
+            candidate.song.songRequestKey() !in usedSongKeys &&
+                artistCounts.getOrDefault(artistKey, 0) < artistCap &&
+                familyCounts.getOrDefault(familyKey, 0) < familyCap
+        }
+        val fillIns = planner.chooseFillIns(
+            vibeBrief = vibeBrief,
+            currentPicks = kept,
+            candidates = replacementCandidates,
+            fillCount = removed.size
+        ).orEmpty()
+        addBalancedFillIns(kept, fillIns, artistCounts, familyCounts, usedSongKeys, artistCap, familyCap)
+
+        if (kept.size < targetSongCount) {
+            val localFillIns = replacementCandidates
+                .filter { it.song.songRequestKey() !in usedSongKeys }
+                .map { BatchPickedSong(it.song, "Local fill-in after repeat cleanup.") }
+            addBalancedFillIns(kept, localFillIns, artistCounts, familyCounts, usedSongKeys, artistCap, familyCap)
+        }
+
+        if (kept.size < targetSongCount) {
+            removed.forEach { pick ->
+                if (kept.size >= targetSongCount || pick.song.songRequestKey() in usedSongKeys) return@forEach
+                kept += pick.copy(reason = "${pick.reason} Repeat allowed because the adjacent pool was narrow.")
+                usedSongKeys += pick.song.songRequestKey()
+            }
+        }
+
+        return spreadArtistRepeats(kept.take(targetSongCount))
+    }
+
+    private fun addBalancedFillIns(
+        target: MutableList<BatchPickedSong>,
+        fillIns: List<BatchPickedSong>,
+        artistCounts: MutableMap<String, Int>,
+        familyCounts: MutableMap<String, Int>,
+        usedSongKeys: MutableSet<String>,
+        artistCap: Int,
+        familyCap: Int
+    ) {
+        fillIns.forEach { fillIn ->
+            val artistKey = fillIn.song.artist.cleanRequestKey()
+            val familyKey = ArtistGroups.familyKey(fillIn.song.artist)
+            val songKey = fillIn.song.songRequestKey()
+            if (songKey in usedSongKeys) return@forEach
+            if (artistCounts.getOrDefault(artistKey, 0) >= artistCap) return@forEach
+            if (familyCounts.getOrDefault(familyKey, 0) >= familyCap) return@forEach
+            target += fillIn
+            usedSongKeys += songKey
+            artistCounts[artistKey] = artistCounts.getOrDefault(artistKey, 0) + 1
+            familyCounts[familyKey] = familyCounts.getOrDefault(familyKey, 0) + 1
+        }
+    }
+
+    private fun protectSeedArtists(
+        picks: List<BatchPickedSong>,
+        candidates: List<Candidate>,
+        seedArtists: List<String>
+    ): List<BatchPickedSong> {
+        if (seedArtists.isEmpty() || picks.isEmpty()) return picks
+        val result = picks.toMutableList()
+        val usedSongKeys = result.map { it.song.songRequestKey() }.toMutableSet()
+        seedArtists.map { it.cleanRequestKey() }.distinct().forEach { seedKey ->
+            if (result.any { it.song.artist.cleanRequestKey() == seedKey }) return@forEach
+            val seedCandidate = candidates.firstOrNull { candidate ->
+                candidate.song.artist.cleanRequestKey() == seedKey &&
+                    candidate.song.songRequestKey() !in usedSongKeys
+            } ?: return@forEach
+            val replaceIndex = result.indexOfBestSeedReplacement(seedArtists)
+            if (replaceIndex < 0) return@forEach
+            usedSongKeys.remove(result[replaceIndex].song.songRequestKey())
+            result[replaceIndex] = BatchPickedSong(
+                song = seedCandidate.song,
+                reason = "Seed artist included to keep the requested vibe anchored."
+            )
+            usedSongKeys += seedCandidate.song.songRequestKey()
+        }
+        return result
+    }
+
+    private fun List<BatchPickedSong>.indexOfBestSeedReplacement(seedArtists: List<String>): Int {
+        val seedKeys = seedArtists.map { it.cleanRequestKey() }.toSet()
+        val familyCounts = groupingBy { ArtistGroups.familyKey(it.song.artist) }.eachCount()
+        val artistCounts = groupingBy { it.song.artist.cleanRequestKey() }.eachCount()
+        return indices
+            .filter { this[it].song.artist.cleanRequestKey() !in seedKeys }
+            .maxByOrNull { index ->
+                val song = this[index].song
+                artistCounts.getOrDefault(song.artist.cleanRequestKey(), 0) * 10 +
+                    familyCounts.getOrDefault(ArtistGroups.familyKey(song.artist), 0)
+            }
+            ?: indices.maxByOrNull { index ->
+                val song = this[index].song
+                artistCounts.getOrDefault(song.artist.cleanRequestKey(), 0) * 10 +
+                    familyCounts.getOrDefault(ArtistGroups.familyKey(song.artist), 0)
+            }
+            ?: -1
+    }
+
+    private fun spreadArtistRepeats(picks: List<BatchPickedSong>): List<BatchPickedSong> {
+        val remaining = picks.toMutableList()
+        val result = mutableListOf<BatchPickedSong>()
+        while (remaining.isNotEmpty()) {
+            val recentArtists = result.takeLast(2).map { it.song.artist.cleanRequestKey() }.toSet()
+            val recentFamilies = result.takeLast(3).map { ArtistGroups.familyKey(it.song.artist) }.toSet()
+            val best = remaining
+                .withIndex()
+                .maxByOrNull { indexed ->
+                    val artistKey = indexed.value.song.artist.cleanRequestKey()
+                    val familyKey = ArtistGroups.familyKey(indexed.value.song.artist)
+                    val remainingSameArtist = remaining.count { it.song.artist.cleanRequestKey() == artistKey }
+                    val remainingSameFamily = remaining.count { ArtistGroups.familyKey(it.song.artist) == familyKey }
+                    val lastSameArtistIndex = result.indexOfLast { it.song.artist.cleanRequestKey() == artistKey }
+                    val lastSameFamilyIndex = result.indexOfLast { ArtistGroups.familyKey(it.song.artist) == familyKey }
+                    val distance = if (lastSameArtistIndex == -1) 99 else result.lastIndex - lastSameArtistIndex
+                    val familyDistance = if (lastSameFamilyIndex == -1) 99 else result.lastIndex - lastSameFamilyIndex
+                    val recentPenalty = if (artistKey in recentArtists) 100 else 0
+                    val recentFamilyPenalty = if (familyKey in recentFamilies) 40 else 0
+                    remainingSameArtist * 12 + remainingSameFamily * 6 + distance + familyDistance - recentPenalty - recentFamilyPenalty
+                }
+                ?: break
+            result += best.value
+            remaining.removeAt(best.index)
+        }
+        return result
+    }
+
+    private suspend fun writeAlbumSegues(album: MusicBrainzAlbum, tracks: List<PreparedShowTrack>): List<PreparedShowTrack> {
+        if (tracks.isEmpty()) return tracks
+        val localSegue = LocalSegueWriter()
+        val openAiClient = config.openAiApiKey.takeIf { it.isNotBlank() }?.let {
+            OpenAiRadioClient(
+                apiKeyProvider = { it },
+                textModel = config.openAiTextModel,
+                generateSpeech = false
+            )
+        }
+        val segueWriter = openAiClient?.let { FallbackSegueWriter(it, localSegue) } ?: localSegue
+        val factFinder = config.lastFmApiKey.takeIf { it.isNotBlank() }?.let {
+            LastFmClient(apiKeyProvider = { it })
+        } ?: com.aipirateradio.app.station.EmptyTrackFactFinder
+        val showSongs = tracks.map { it.song }
+        val showTheme = "Full album mode: ${album.artist} - ${album.title}. Respect the album sequence and frame it like one record taking over the booth."
+        return tracks.mapIndexed { index, track ->
+            if (index > 0 && index % 4 != 0) return@mapIndexed track
+            val facts = runCatching { factFinder.factsFor(track.song) }.getOrDefault(emptyList())
+            val segue = segueWriter.writeSegue(
+                SegueRequest(
+                    song = track.song,
+                    type = if (index == 0) SegueType.THEME else SegueType.TRANSITION,
+                    previousSong = tracks.getOrNull(index - 1)?.song,
+                    showTheme = showTheme,
+                    isNewArtist = index == 0,
+                    verifiedFacts = facts,
+                    showSongs = showSongs
+                )
+            )
+            track.copy(segueText = segue?.text)
         }
     }
 
@@ -423,6 +853,7 @@ class PirateRadioDiscordBot(
             session.vibeLabel = "Local Library"
             session.queueVibes = MutableList(show.tracks.size) { "Local Library" }
             session.nextTrackIndex = 0
+            session.journeyLockedUntilIndex = 0
             appendPreparedShowToHistory(session, show)
             store.saveSession(RadioSessionKey(guild.idLong, voiceChannel.idLong), session)
             visualizerState.prepared(show, "Local Library")
@@ -467,22 +898,30 @@ class PirateRadioDiscordBot(
             while (true) {
                 val currentShow = session.preparedShow ?: break
                 if (index >= currentShow.tracks.size) break
-                val track = currentShow.tracks[index]
+                val track = resolveTrackForPlayback(session, currentShow, index)
+                    ?: run {
+                        pauseAtMissingTrack(session, guild.idLong, voiceChannel, index, currentShow.tracks[index], event)
+                        return@launch
+                    }
+                val playbackShow = session.preparedShow ?: currentShow
                 if (session.player.isStopped()) return@launch
                 val trackVibe = session.vibeLabelAt(index)
                 session.vibeLabel = trackVibe
-                session.nextTrackIndex = (index + 1).coerceAtMost(currentShow.tracks.size)
+                session.nextTrackIndex = (index + 1).coerceAtMost(playbackShow.tracks.size)
                 store.saveSession(RadioSessionKey(guild.idLong, voiceChannel.idLong), session)
-                answerCallInIfQueued(session, currentShow, index, trackVibe, speech, event)
+                answerCallInIfQueued(session, playbackShow, index, trackVibe, speech, event)
+                if (session.player.isStopped()) return@launch
                 track.segueText?.takeIf { it.isNotBlank() }?.let {
                     visualizerState.djLine(it)
                     event.channel.sendMessage("DJ: $it").queue()
                     playDjSegue(session, speech, it, event)
                 }
-                visualizerState.onAir(currentShow, index, track.segueText, trackVibe)
-                event.channel.sendMessage("Now playing ${index + 1}/${currentShow.tracks.size}: ${track.song.artist} - ${track.song.title}").queue()
+                if (session.player.isStopped()) return@launch
+                visualizerState.onAir(playbackShow, index, track.segueText, trackVibe)
+                event.channel.sendMessage("Now playing ${index + 1}/${playbackShow.tracks.size}: ${track.song.artist} - ${track.song.title}").queue()
                 updateVoiceChannelStatus(voiceChannel, "Now playing: ${track.song.artist} - ${track.song.title}")
                 val played = session.player.play(track.song)
+                if (session.player.isStopped()) return@launch
                 if (played) {
                     appendHistory(
                         session,
@@ -500,7 +939,8 @@ class PirateRadioDiscordBot(
                     )
                     store.saveSession(RadioSessionKey(guild.idLong, voiceChannel.idLong), session)
                 } else {
-                    event.channel.sendMessage("Skipped missing or unsupported file: ${track.song.artist} - ${track.song.title}").queue()
+                    pauseAtMissingTrack(session, guild.idLong, voiceChannel, index, track, event)
+                    return@launch
                 }
                 index += 1
             }
@@ -509,11 +949,82 @@ class PirateRadioDiscordBot(
             store.saveSession(RadioSessionKey(guild.idLong, voiceChannel.idLong), session)
             val latestShow = session.preparedShow
             if (latestShow != null && session.nextTrackIndex >= latestShow.tracks.size) {
+                writeClosingSegue(latestShow, session.vibeLabel)?.takeIf { it.isNotBlank() }?.let {
+                    visualizerState.djLine(it)
+                    event.channel.sendMessage("DJ: $it").queue()
+                    playDjSegue(session, speech, it, event)
+                }
                 updateVoiceChannelStatus(voiceChannel, null)
                 visualizerState.complete()
                 event.channel.sendMessage("Show complete.").queue()
             }
         }
+    }
+
+    private suspend fun resolveTrackForPlayback(
+        session: GuildRadioSession,
+        show: PreparedShow,
+        index: Int
+    ): PreparedShowTrack? {
+        val track = show.tracks[index]
+        if (track.song.localPathOrNull()?.let { Files.isRegularFile(it) } == true) return track
+
+        val resolver = DesktopTrackResolver(DesktopMusicLibrary(config.musicLibraryPath))
+        val resolvedSong = resolver.resolve(track.song)
+        if (resolvedSong?.localPathOrNull()?.let { Files.isRegularFile(it) } != true) return null
+
+        val updatedTrack = track.copy(song = resolvedSong)
+        session.preparedShow = show.copy(
+            tracks = show.tracks.toMutableList().also { tracks ->
+                tracks[index] = updatedTrack
+            }
+        )
+        return updatedTrack
+    }
+
+    private fun pauseAtMissingTrack(
+        session: GuildRadioSession,
+        guildId: Long,
+        voiceChannel: AudioChannel,
+        index: Int,
+        track: PreparedShowTrack,
+        event: SlashCommandInteractionEvent
+    ) {
+        session.player.stop()
+        session.nextTrackIndex = index
+        session.isPlaying = false
+        session.djUserId = null
+        store.saveSession(RadioSessionKey(guildId, voiceChannel.idLong), session)
+        updateVoiceChannelStatus(voiceChannel, "Paused: missing ${track.song.artist} - ${track.song.title}")
+        visualizerState.paused("Missing: ${track.song.artist} - ${track.song.title}")
+        event.guild?.audioManager?.closeAudioConnection()
+        event.channel.sendMessage(
+            "Paused at missing track ${index + 1}: ${track.song.artist} - ${track.song.title}.\n" +
+                "Run `/download-missing`, then `/play` to resume from here."
+        ).queue()
+    }
+
+    private suspend fun writeClosingSegue(show: PreparedShow, vibe: String): String? {
+        val lastTrack = show.tracks.lastOrNull() ?: return null
+        val localSegue = LocalSegueWriter()
+        val openAiClient = config.openAiApiKey.takeIf { it.isNotBlank() }?.let {
+            OpenAiRadioClient(
+                apiKeyProvider = { it },
+                textModel = config.openAiTextModel,
+                generateSpeech = false
+            )
+        }
+        val segueWriter = openAiClient?.let { FallbackSegueWriter(it, localSegue) } ?: localSegue
+        return segueWriter.writeSegue(
+            SegueRequest(
+                song = lastTrack.song,
+                type = SegueType.CLOSING,
+                previousSong = show.tracks.dropLast(1).lastOrNull()?.song,
+                showTheme = "Closing sign-off for this Radio Skittles set. Current vibe: $vibe.",
+                isNewArtist = false,
+                showSongs = show.tracks.map { it.song }
+            )
+        )?.text
     }
 
     private fun status(event: SlashCommandInteractionEvent) {
@@ -593,6 +1104,10 @@ class PirateRadioDiscordBot(
                     return@launch
                 }
             val localSong = requestedSong.takeIf { it.localPathOrNull() != null }
+            SeasonalMusicPolicy.rejectionReason(requestedSong, now)?.let {
+                event.hook.editOriginal("I hear the request for ${requestedSong.artist} - ${requestedSong.title}, but I am not emotionally prepared for holiday music yet. Try it again once the lights go up.").queue()
+                return@launch
+            }
             if (show.hasSong(requestedSong) || session.history.hasSong(requestedSong)) {
                 event.hook.editOriginal("That one has already been through the booth recently or is already in the queue. Try a different song.").queue()
                 return@launch
@@ -604,11 +1119,25 @@ class PirateRadioDiscordBot(
                 event.hook.editOriginal("I hear the request for ${requestedSong.artist} - ${requestedSong.title}, but $reason. Try it again next show.").queue()
                 return@launch
             }
-            val insertIndex = planner.chooseInsertionIndex(show, session.nextTrackIndex, requestedSong)
-                ?: defaultRequestInsertIndex(session.nextTrackIndex, show.tracks.size, fitDecision)
+            val journeyProtected = session.isJourneyProtected()
+            val insertIndex = if (journeyProtected) {
+                show.tracks.size
+            } else {
+                planner.chooseInsertionIndex(show, session.nextTrackIndex, requestedSong)
+                    ?: defaultRequestInsertIndex(session.nextTrackIndex, show.tracks.size, fitDecision)
+            }
+            val artistRequestLabel = request.takeIf { it.isArtistOnly }?.displayName()
+            val requestSegue = RequestSegueWriter(config.openAiApiKey, config.openAiTextModel).write(
+                song = requestedSong,
+                currentVibe = requestVibe,
+                fitDecision = fitDecision,
+                requesterName = event.user.effectiveName,
+                artistRequest = artistRequestLabel,
+                playful = requestedSong.deservesSillyRequestSegue()
+            ) ?: requestSegueText(requestedSong, fitDecision, artistRequestLabel)
             val requestTrack = PreparedShowTrack(
                 song = requestedSong,
-                segueText = requestSegueText(requestedSong, fitDecision, request.takeIf { it.isArtistOnly }?.displayName()),
+                segueText = requestSegue,
                 pickReason = if (request.isArtistOnly) {
                     "Listener request: ${event.user.effectiveName} asked for ${request.displayName()}, so the station picked this track."
                 } else {
@@ -639,7 +1168,8 @@ class PirateRadioDiscordBot(
             } else {
                 "Request added"
             }
-            event.hook.editOriginal("$pickedText Added at #$position.$fitText $readyText").queue()
+            val journeyText = if (journeyProtected) " Saved until after the journey." else ""
+            event.hook.editOriginal("$pickedText Added at #$position.$fitText$journeyText $readyText").queue()
         }
     }
 
@@ -860,9 +1390,11 @@ class PirateRadioDiscordBot(
         event: SlashCommandInteractionEvent
     ) {
         repeat(2) { attempt ->
+            if (session.player.isStopped()) return
             val speechFile = speech(text)
             if (speechFile == null || !Files.isRegularFile(speechFile) || Files.size(speechFile) == 0L) {
                 runCatching { if (speechFile != null) Files.deleteIfExists(speechFile) }
+                if (session.player.isStopped()) return
                 if (attempt == 0) {
                     delay(500)
                     return@repeat
@@ -873,6 +1405,7 @@ class PirateRadioDiscordBot(
 
             val spoke = session.player.playFile(speechFile.toString())
             runCatching { Files.deleteIfExists(speechFile) }
+            if (session.player.isStopped()) return
             if (spoke) return
             if (attempt == 0) {
                 delay(500)
@@ -968,7 +1501,8 @@ class PirateRadioDiscordBot(
                 queueVibes = persisted.queueVibes.toMutableList(),
                 requestCooldowns = persisted.requestCooldowns.toMutableMap(),
                 callIns = persisted.callIns.toMutableList(),
-                askCooldowns = persisted.askCooldowns.toMutableMap()
+                askCooldowns = persisted.askCooldowns.toMutableMap(),
+                journeyLockedUntilIndex = persisted.journeyLockedUntilIndex
             ).also { trimHistory(it) }
         }
 
@@ -1096,6 +1630,27 @@ private fun List<PlayRecord>.hasSong(song: Song): Boolean =
 private fun Song.sameRequestedSong(other: Song): Boolean =
     artist.cleanRequestKey() == other.artist.cleanRequestKey() && title.cleanRequestKey() == other.title.cleanRequestKey()
 
+private fun Song.songRequestKey(): String =
+    "${artist.cleanRequestKey()}|${title.cleanRequestKey()}"
+
+private fun GuildRadioSession.isJourneyProtected(): Boolean =
+    journeyLockedUntilIndex > 0 && nextTrackIndex < journeyLockedUntilIndex
+
+private fun PreparedShow.withJourneyReasons(beats: List<JourneyBeat>): PreparedShow {
+    if (beats.isEmpty()) return this
+    return copy(
+        tracks = tracks.mapIndexed { index, track ->
+            val beat = beats.getOrNull(index) ?: return@mapIndexed track
+            val beatReason = "Journey chapter ${beat.number}: ${beat.description} (${beat.word})"
+            val existing = track.pickReason?.takeIf { it.isNotBlank() }
+            track.copy(pickReason = if (existing == null) beatReason else "$beatReason $existing")
+        }
+    )
+}
+
+private fun List<JourneyBeat>.formatJourneyBeats(): String =
+    joinToString("\n") { beat -> "${beat.number}. ${beat.description} (${beat.word})" }
+
 private fun defaultRequestInsertIndex(nextTrackIndex: Int, trackCount: Int, fitDecision: RequestFitDecision?): Int {
     val offset = if (fitDecision?.isStretch == true) 3 else 1
     return (nextTrackIndex + offset).coerceIn(nextTrackIndex.coerceAtLeast(0), trackCount)
@@ -1108,11 +1663,36 @@ private fun requestSegueText(song: Song, fitDecision: RequestFitDecision?, artis
         "We had an artist request come through for $artistRequest, and ${song.artist} with ${song.title} is where the station landed"
     }
     return if (fitDecision?.isStretch == true) {
-        "$requestIntro. It bends the shape of this set a little, but sometimes a curveball earns its place."
+        if (song.deservesSillyRequestSegue()) {
+            "$requestIntro. It is absolutely ridiculous, which is not a flaw so much as a signed permission slip."
+        } else {
+            "$requestIntro. It bends the shape of this set a little, but sometimes a curveball earns its place."
+        }
     } else {
         "$requestIntro."
     }
 }
+
+private fun Song.deservesSillyRequestSegue(): Boolean {
+    val text = "${artist} ${title} ${album.orEmpty()} ${genreTags.joinToString(" ")} ${moodTags.joinToString(" ")}".cleanRequestKey()
+    return SILLY_METAL_TERMS.any { text.contains(it) }
+}
+
+private val SILLY_METAL_TERMS = listOf(
+    "gloryhammer",
+    "alestorm",
+    "angus mcsix",
+    "rumahoy",
+    "victorius",
+    "dinosaur",
+    "laser",
+    "hoots",
+    "wizard",
+    "dragon",
+    "pirate",
+    "cowboys of the sea",
+    "diggy diggy hole"
+)
 
 private val REQUEST_COOLDOWN: Duration = Duration.ofMinutes(20)
 private val ASK_COOLDOWN: Duration = Duration.ofMinutes(15)
@@ -1138,6 +1718,7 @@ data class GuildRadioSession(
     val requestCooldowns: MutableMap<Long, Instant> = mutableMapOf(),
     val callIns: MutableList<CallInQuestion> = mutableListOf(),
     val askCooldowns: MutableMap<Long, Instant> = mutableMapOf(),
+    var journeyLockedUntilIndex: Int = 0,
     var djUserId: Long? = null,
     var voiceChannelId: Long? = null,
     var isPlaying: Boolean = false

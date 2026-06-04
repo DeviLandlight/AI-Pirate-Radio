@@ -36,6 +36,7 @@ Then run:
 - `/join` joins your current voice channel.
 - `/prepare` prepares a radio show from your local music folder or the sample catalog.
 - `/prepare-next` appends another radio block after the current queue so playback can continue without stopping.
+- `/prepare-journey` prepares a beat-by-beat radio journey where the DJ connects the songs into an arc.
 - `/prepare-local` prepares a radio show using only files already in your music folder.
 - `/vibes` lists built-in vibe names/ids and artist seeds for `/prepare`.
 - `/queue` shows the prepared show.
@@ -58,6 +59,8 @@ Prepared shows and play history are saved under `BOT_DATA_PATH`, defaulting to `
 `/download-missing` searches YouTube via `yt-dlp` and extracts audio to mp3. Only use it for content you have rights to download.
 
 `/request` allows one accepted request per user every 20 minutes, rejects exact song repeats from the current queue/recent history, and uses the OpenAI text model to reject only clearly off-vibe requests. If you request only an artist, the bot tries your local library first, then Last.fm, and asks you to run `/download-missing` if the picked song is not local yet.
+
+When a `/prepare-journey` show is still inside its protected journey block, accepted requests are saved after the journey instead of being inserted into the middle of the arc.
 
 `/ask` allows one call-in question per user every 15 minutes. The DJ answers queued questions between songs, using the current set as the frame even when the question is not strictly about music.
 

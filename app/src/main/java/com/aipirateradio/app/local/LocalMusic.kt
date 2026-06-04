@@ -15,6 +15,7 @@ import com.aipirateradio.app.recommendations.MusicRecommender
 import com.aipirateradio.app.recommendations.RecommendationPool
 import com.aipirateradio.app.recommendations.RecommendationRequest
 import com.aipirateradio.app.station.Song
+import com.aipirateradio.app.station.TrackQualityPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -59,7 +60,7 @@ class LocalMusicLibrary(context: Context) {
                         )
                     )
                 }
-            }
+            }.filter { TrackQualityPolicy.isPlayableCatalogTrack(it) }
         }.orEmpty()
     }
 }

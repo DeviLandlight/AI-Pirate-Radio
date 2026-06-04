@@ -5,6 +5,7 @@ import com.aipirateradio.app.recommendations.MusicRecommender
 import com.aipirateradio.app.recommendations.RecommendationPool
 import com.aipirateradio.app.recommendations.RecommendationRequest
 import com.aipirateradio.app.station.Song
+import com.aipirateradio.app.station.TrackQualityPolicy
 import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
@@ -26,6 +27,7 @@ class DesktopMusicLibrary(
                 .filter { it.isRegularFile() }
                 .filter { it.extension.lowercase() in AUDIO_EXTENSIONS }
                 .map { it.toSong() }
+                .filter { TrackQualityPolicy.isPlayableCatalogTrack(it) }
                 .toList()
         }
     }

@@ -20,7 +20,7 @@ class OpenAiRadioClient(
     override suspend fun pickSong(request: SongPickRequest): SongPickResult? {
         val responseText = createTextResponse(
             instructions = OpenAiPrompts.songPickerSystemPrompt(),
-            input = OpenAiPrompts.songPickerUserPrompt(request.previousSongs, request.candidates),
+            input = OpenAiPrompts.songPickerUserPrompt(request.stationHistory, request.currentShowSongs, request.journeyBeat, request.candidates),
             schemaName = "song_pick",
             schema = JSONObject()
                 .put("type", "object")
@@ -70,7 +70,11 @@ class OpenAiRadioClient(
 
     private suspend fun createSpeech(text: String): ByteArray? = withContext(Dispatchers.IO) {
         if (text.isBlank()) return@withContext null
-        val body = JSONObject().put("model", ttsModel).put("voice", ttsVoice).put("input", text).put("instructions", "Sound like a warm, understated radio host.")
+        val body = JSONObject()
+            .put("model", ttsModel)
+            .put("voice", ttsVoice)
+            .put("input", text)
+            .put("instructions", RADIO_DJ_TTS_INSTRUCTIONS)
         val request = Request.Builder()
             .url("https://api.openai.com/v1/audio/speech")
             .header("Authorization", "Bearer ${apiKeyProvider()}")
@@ -95,5 +99,13 @@ class OpenAiRadioClient(
     private companion object {
         const val JSON_CONTENT_TYPE = "application/json"
         val JSON = JSON_CONTENT_TYPE.toMediaType()
+        val RADIO_DJ_TTS_INSTRUCTIONS = """
+            Perform as a charismatic late-night radio DJ, not an audiobook narrator.
+            Sound warm, amused, present, and conversational, with a slight smile in the voice.
+            Add natural pauses at sentence breaks. Give important artist and song names a little emphasis.
+            Let the emotion match the copy: playful lines can be a little mischievous, sincere lines can soften, high-energy lines can lift.
+            Keep it intimate and radio-real. Do not shout, overact, sing, do character voices, or sound like an advertisement.
+            Avoid a flat monotone. Avoid exaggerated announcer voice.
+        """.trimIndent()
     }
 }

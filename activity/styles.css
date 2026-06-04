@@ -227,6 +227,8 @@ h1 {
 .status-wrap { text-align: center; }
 .external-link { display: none; }
 body.embedded-activity .external-link { display: inline-flex; }
+.view-toggle { display: none; }
+body.embedded-activity .view-toggle { display: inline-flex; }
 
 footer {
   position: fixed;
@@ -247,7 +249,6 @@ footer {
   gap: 18px;
 }
 
-.view-toggle,
 .external-link {
   border: 1px solid rgba(110, 232, 219, .48);
   background: rgba(38, 198, 255, .08);
@@ -262,8 +263,25 @@ footer {
   text-decoration: none;
 }
 
-.view-toggle:hover,
 .external-link:hover {
+  border-color: rgba(110, 232, 219, .82);
+  box-shadow: 0 0 18px rgba(38, 198, 255, .22);
+}
+
+.view-toggle {
+  border: 1px solid rgba(110, 232, 219, .48);
+  background: rgba(38, 198, 255, .08);
+  color: #bafff7;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font: inherit;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.view-toggle:hover {
   border-color: rgba(110, 232, 219, .82);
   box-shadow: 0 0 18px rgba(38, 198, 255, .22);
 }

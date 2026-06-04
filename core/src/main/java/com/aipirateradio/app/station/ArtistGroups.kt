@@ -10,6 +10,8 @@ object ArtistGroups {
             "foo fighters", "dave grohl" -> "foo_fighters_family"
             "the beatles", "john lennon", "paul mccartney", "george harrison", "ringo starr" -> "beatles_family"
             "electric light orchestra", "elo", "jeff lynne", "jeff lynnes elo" -> "elo_family"
+            "ayreon", "star one", "arjen anthony lucassen", "the gentle storm", "guilt machine", "ambertian dawn" -> "arjen_lucassen_family"
+            "avantasia", "edguy", "tobias sammet" -> "tobias_sammet_family"
             else -> normalized
         }
     }
@@ -21,6 +23,8 @@ object ArtistGroups {
             "the horrible crowes", "brian fallon" -> "literary_heartland_indie"
             "pearl jam", "eddie vedder", "soundgarden", "temple of the dog", "alice in chains", "nirvana" -> "grunge_alt_rock"
             "foo fighters", "dave grohl" -> "modern_alt_anthem"
+            "ayreon", "star one", "arjen anthony lucassen", "the gentle storm", "guilt machine",
+            "avantasia", "edguy", "tobias sammet", "kamelot", "symphony x", "seventh wonder" -> "theatrical_prog_power_metal"
             else -> normalized
         }
     }
